@@ -17,6 +17,7 @@ const (
 	keyAccessJTI
 	keyAccessExpiresAt
 	keyRequestID
+	keyEventCapabilities
 )
 
 func WithUserID(ctx context.Context, id string) context.Context {
@@ -85,6 +86,21 @@ func AccessTokenJTI(ctx context.Context) (string, bool) {
 
 func AccessTokenExpiresAtUnix(ctx context.Context) (int64, bool) {
 	v, ok := ctx.Value(keyAccessExpiresAt).(int64)
+	return v, ok
+}
+
+// WithEventCapabilities/EventCapabilities carry the capability set an
+// event.RequireEventAccess Path B (assignment-based) caller was granted -
+// set only on that path, so a handler can tell an externally-assigned
+// crew/volunteer caller apart from an internal tenant-role caller (which
+// instead has MemberRole set, per RequireEventAccess's Path A) without a
+// second database round trip. See internal/event/access.go.
+func WithEventCapabilities(ctx context.Context, capabilities []string) context.Context {
+	return context.WithValue(ctx, keyEventCapabilities, capabilities)
+}
+
+func EventCapabilities(ctx context.Context) ([]string, bool) {
+	v, ok := ctx.Value(keyEventCapabilities).([]string)
 	return v, ok
 }
 

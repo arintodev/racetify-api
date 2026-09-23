@@ -10,19 +10,25 @@ import (
 	"github.com/racetify/racetify-api/internal/platform/pagination"
 )
 
-// Repository owns both tables this bounded context is responsible for -
-// events and races - as one consolidated type, matching the package-per-
+// Repository owns every table this bounded context is responsible for -
+// events, races, and (assignment_repository.go) event_assignments/
+// event_invitations - as one consolidated type, matching the package-per-
 // bounded-context pattern's "one repository.go per context" shape (see
 // internal/tenant/repository.go's doc comment for the same reasoning).
-// Every method is tenant-scoped: callers must run inside a
-// database.DB.WithTenantTx-opened context, or RLS
-// (migrations/0006_events_races.up.sql) makes them see zero rows.
+// Every method is tenant-scoped and must run inside a
+// database.DB.WithTenantTx-opened context, or RLS makes it see zero rows -
+// except the handful of adminDB-based lookups assignment_repository.go
+// documents individually (TenantIDForEvent, MyAssignments), which mirror
+// internal/tenant.Repository.ListTenantsForUser's "cross-tenant question,
+// answered safely because the WHERE clause is pinned to an
+// already-authenticated id" reasoning.
 type Repository struct {
-	db *database.DB
+	db      *database.DB
+	adminDB *database.DB
 }
 
-func NewRepository(db *database.DB) *Repository {
-	return &Repository{db: db}
+func NewRepository(db, adminDB *database.DB) *Repository {
+	return &Repository{db: db, adminDB: adminDB}
 }
 
 // ==================== events ====================

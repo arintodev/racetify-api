@@ -14,9 +14,13 @@ CREATE TABLE generator_templates (
     name        TEXT NOT NULL,
     -- bib | certificate
     service     TEXT NOT NULL,
-    -- Placeholder-field bookkeeping: which {{TOKENS}} this SVG uses, so the
-    -- generator can validate a template before a batch job burns through
-    -- every participant only to fail on a missing token.
+    -- Placeholder-field bookkeeping: which placeholder tokens this SVG
+    -- uses, so the generator can validate a template before a batch job
+    -- burns through every participant only to fail on a missing token.
+    -- Deliberately not written with double curly braces around the word
+    -- "tokens" - that collides with internal/platform/database's own
+    -- migration-templating substitution syntax and made cmd/migrate fail
+    -- on this file for every fresh database.
     metadata    JSONB NOT NULL DEFAULT '{}',
     created_by  UUID NOT NULL REFERENCES users(id),
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),

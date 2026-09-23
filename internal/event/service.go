@@ -8,7 +8,11 @@ import (
 	"time"
 
 	"github.com/racetify/racetify-api/internal/audit"
+	"github.com/racetify/racetify-api/internal/auth"
+	"github.com/racetify/racetify-api/internal/config"
 	"github.com/racetify/racetify-api/internal/domain"
+	"github.com/racetify/racetify-api/internal/httpapi/middleware"
+	"github.com/racetify/racetify-api/internal/mailer"
 	"github.com/racetify/racetify-api/internal/platform/database"
 	"github.com/racetify/racetify-api/internal/platform/pagination"
 	"github.com/racetify/racetify-api/internal/platform/rbac"
@@ -24,14 +28,40 @@ import (
 // pattern used throughout this codebase for provisioning-type actions.
 // Read methods take no actorRole: they rely solely on the router-level
 // mw.RequireAnyRole gate, matching internal/tenant.Service.ListMembers.
+// users *auth.Repository, mailer, and cfg exist solely for
+// assignment_service.go's event_invitations flow (AssignToEvent/
+// AcceptEventInvitation) - a one-directional, downward dependency on the
+// auth bounded context, the exact same shape and justification as
+// internal/tenant.Service's own "users *auth.Repository" field (see that
+// struct's doc comment): looking up an inviter's display name, checking
+// whether an invited email already has an account, and confirming an
+// invitation acceptor's email matches. auth never imports event, so this
+// is not a cycle.
 type Service struct {
-	db    *database.DB
-	repo  *Repository
-	audit *audit.Repository
+	db     *database.DB
+	repo   *Repository
+	audit  *audit.Repository
+	users  *auth.Repository
+	mailer mailer.Mailer
+	cfg    config.AuthConfig
+	// members backs RequireEventAccess's Path A re-verification (access.go)
+	// - the exact same MembershipChecker shape mw.RequireTenantForUser
+	// depends on, structurally satisfied by *tenant.Repository without
+	// this package importing internal/tenant (see middleware.
+	// MembershipChecker's own doc comment for why it lives there instead).
+	members middleware.MembershipChecker
 }
 
-func NewService(db *database.DB, repo *Repository, audit *audit.Repository) *Service {
-	return &Service{db: db, repo: repo, audit: audit}
+func NewService(
+	db *database.DB,
+	repo *Repository,
+	audit *audit.Repository,
+	users *auth.Repository,
+	m mailer.Mailer,
+	cfg config.AuthConfig,
+	members middleware.MembershipChecker,
+) *Service {
+	return &Service{db: db, repo: repo, audit: audit, users: users, mailer: m, cfg: cfg, members: members}
 }
 
 // slugSanitizer/Slugify are duplicated from internal/tenant/service.go

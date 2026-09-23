@@ -57,4 +57,11 @@ const (
 
 	ActionPhotoUploaded     = "photo.uploaded"
 	ActionPhotoTagCorrected = "photo_tag.corrected"
+
+	// Event-scoped crew/volunteer access (docs/event-crew-access-plan.md).
+	ActionEventAssignmentCreated  = "event_assignment.created"
+	ActionEventAssignmentUpdated  = "event_assignment.updated"
+	ActionEventAssignmentRevoked  = "event_assignment.revoked"
+	ActionEventAssignmentInvited  = "event_assignment.invited"
+	ActionEventAssignmentAccepted = "event_assignment.accepted"
 )

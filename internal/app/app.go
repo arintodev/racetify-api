@@ -82,7 +82,7 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 	oauthClients := oauthclient.NewRepository(appDB, adminDB)
 	auditRepo := audit.NewRepository(appDB)
 	objects := storage.NewRepository(appDB, adminDB)
-	events := event.NewRepository(appDB)
+	events := event.NewRepository(appDB, adminDB)
 	jobs := jobqueue.NewRepository(appDB, adminDB)
 
 	tokens := security.NewTokenManager(cfg.Auth.JWTSecret, cfg.Auth.Issuer)
@@ -116,7 +116,7 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 	tenantService := tenant.NewService(appDB, tenants, authRepo, auditRepo, mail, cfg.Auth)
 	oauthClientService := oauthclient.NewService(appDB, oauthClients, auditRepo, tokens, limiter, cfg.Auth)
 	storageService := storage.NewService(appDB, objects, auditRepo, objectStore, cfg.Storage)
-	eventService := event.NewService(appDB, events, auditRepo)
+	eventService := event.NewService(appDB, events, auditRepo, authRepo, mail, cfg.Auth, tenants)
 	jobQueue := jobqueue.NewQueue(appDB, jobs, redisClient)
 
 	return &App{
