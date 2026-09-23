@@ -1,0 +1,20 @@
+-- Phase 1 retrofit to the Phase 0 `objects` table, ahead of Generator/
+-- Gallery (docs/phase1-api-plan.md §2, "Multi-provider storage"). Every
+-- objects row will eventually resolve through a named storage provider
+-- once internal/platform/objectstorage grows a Registry - that Go-side
+-- redesign is deliberately deferred until Generator/Gallery actually need
+-- it (see docs/phase1-api-plan.md §9's import-direction note), so this
+-- migration only adds the column and backfills it. Nothing in Go reads or
+-- writes `provider` yet, so Phase 0 behavior is unchanged.
+--
+-- Every existing row is backfilled to {{STORAGE_DEFAULT_PROVIDER}} - the
+-- one driver Phase 0 ever had active (STORAGE_DRIVER: "local" or "r2") -
+-- since that is a recorded fact about how each row was written, not a
+-- guess. See cmd/migrate/main.go's migrationVars for where this template
+-- var comes from.
+--
+-- provider is plain TEXT with no CHECK constraint, same reasoning as
+-- 0001_core.up.sql's doc comment: the legal set is enforced once, in Go
+-- (the future Registry's map of configured provider names), not in the
+-- schema.
+ALTER TABLE objects ADD COLUMN provider TEXT NOT NULL DEFAULT '{{STORAGE_DEFAULT_PROVIDER}}';

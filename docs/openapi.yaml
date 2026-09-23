@@ -1,0 +1,729 @@
+openapi: 3.0.3
+info:
+  title: Racetify API - Phase 0 (Fondasi Sistem)
+  version: "0.1.0"
+  description: |
+    User Auth & Registration, Tenant/Organizer Onboarding, Staff Invitation
+    Flow, and the OAuth 2.0 Client Credentials (Server-to-Server) grant -
+    the Phase 0 foundation described in
+    `implementation_guide_phase_0.md`. Business-domain endpoints (events,
+    races, participants, ...) ship in later phases.
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+tags:
+  - name: Auth
+    description: Runner self-registration, login, session management, Google sign-in.
+  - name: Tenants
+    description: Tenant/Organizer registration and workspace membership.
+  - name: Invitations
+    description: Tenant Staff Onboarding (Invitation Flow).
+  - name: OAuth Clients
+    description: Server-to-Server credential provisioning (management API).
+  - name: Object Storage
+    description: >-
+      Presigned upload/download of tenant-owned files (implementation
+      guide §3/§6).
+  - name: OAuth2
+    description: The Client Credentials grant itself (RFC 6749 §4.4).
+  - name: Platform Verification
+    description: >-
+      Platform Super Admin-only, cross-tenant operations (PRD: "verifikasi
+      organizer").
+  - name: Health
+    description: Liveness/readiness probes.
+
+paths:
+  /healthz:
+    get:
+      tags: [Health]
+      summary: Liveness probe
+      responses:
+        "200": { description: OK }
+
+  /readyz:
+    get:
+      tags: [Health]
+      summary: Readiness probe (checks Postgres + Redis connectivity)
+      responses:
+        "200": { description: Ready }
+        "503": { description: A dependency is unreachable }
+
+  /api/v1/auth/register:
+    post:
+      tags: [Auth]
+      summary: Runner self-registration (email + password)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, first_name]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8 }
+                first_name: { type: string }
+                last_name: { type: string, description: "Optional." }
+      responses:
+        "201":
+          description: Account created; a verification email was sent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+        "409": { description: Email already registered }
+
+  /api/v1/auth/verify-email:
+    post:
+      tags: [Auth]
+      summary: Consume an email-verification / magic-link token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties: { token: { type: string } }
+      responses:
+        "200": { description: Verified }
+        "400": { description: "Token invalid, expired, or already used" }
+
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      summary: Email + password login
+      description: >
+        On success, sets an HTTP-only refresh-token cookie (scoped to
+        /api/v1/auth) and returns a short-lived JWT access token in the
+        body.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        "200":
+          description: Session issued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+        "401": { description: Invalid credentials }
+        "403": { description: Account suspended }
+        "429": { description: Too many login attempts (brute-force protection) }
+
+  /api/v1/auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Rotate the refresh-token cookie and mint a new access token
+      responses:
+        "200": { description: New session issued }
+        "401": { description: No/invalid/expired/reused refresh token }
+
+  /api/v1/auth/logout:
+    post:
+      tags: [Auth]
+      security: [{ bearerAuth: [] }]
+      summary: Revoke the current session (refresh token + access-token blacklist)
+      responses:
+        "200": { description: Logged out }
+
+  /api/v1/auth/google/login:
+    get:
+      tags: [Auth]
+      summary: Begin Google OAuth2 sign-in (redirects to Google)
+      responses:
+        "302": { description: Redirect to Google's consent screen }
+        "501": { description: Google sign-in not configured }
+
+  /api/v1/auth/google/callback:
+    get:
+      tags: [Auth]
+      summary: Google OAuth2 callback - completes sign-in and issues a session
+      parameters:
+        - in: query
+          name: code
+          required: true
+          schema: { type: string }
+        - in: query
+          name: state
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Session issued }
+        "401": { description: Invalid/expired/replayed state }
+
+  /api/v1/users/me:
+    get:
+      tags: [Auth]
+      security: [{ bearerAuth: [] }]
+      summary: The authenticated user's profile
+      responses:
+        "200": { description: OK }
+
+  /api/v1/tenants:
+    post:
+      tags: [Tenants]
+      security: [{ bearerAuth: [] }]
+      summary: Register a new Tenant/Organizer workspace
+      description: The caller automatically becomes the tenant's Owner.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                slug: { type: string, description: "Optional; derived from name if omitted." }
+      responses:
+        "201": { description: Tenant created }
+
+  /api/v1/tenants/me:
+    get:
+      tags: [Tenants]
+      security: [{ bearerAuth: [] }]
+      summary: List every tenant the caller belongs to, with their role in each
+      responses:
+        "200": { description: OK }
+
+  /api/v1/members:
+    get:
+      tags: [Tenants]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/TenantHeader" }
+        - { $ref: "#/components/parameters/PageLimit" }
+        - { $ref: "#/components/parameters/PageCursor" }
+      summary: List the resolved tenant's members (any active role), paginated
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PagedEnvelope" }
+
+  /api/v1/invitations:
+    post:
+      tags: [Invitations]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/TenantHeader" }]
+      summary: Invite a staff/crew member (Owner/Admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, role]
+              properties:
+                email: { type: string, format: email }
+                role: { type: string, enum: [admin, staff] }
+      responses:
+        "201":
+          description: >
+            Invitation created. The response includes the one-time raw
+            token (also emailed) so it can be shared by the inviting admin
+            directly if no mail provider is configured.
+        "403": { description: Insufficient role (staff cannot invite) }
+
+    get:
+      tags: [Invitations]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/TenantHeader" }
+        - { $ref: "#/components/parameters/PageLimit" }
+        - { $ref: "#/components/parameters/PageCursor" }
+      summary: List the resolved tenant's invitations (Owner/Admin only), paginated
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PagedEnvelope" }
+
+  /api/v1/invitations/{id}:
+    delete:
+      tags: [Invitations]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/TenantHeader" }
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      summary: Revoke a pending invitation (Owner/Admin only)
+      responses:
+        "204": { description: Invitation revoked }
+
+  /api/v1/invitations/accept:
+    post:
+      tags: [Invitations]
+      security: [{ bearerAuth: [] }]
+      summary: Redeem an invitation token as the currently authenticated user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties: { token: { type: string } }
+      responses:
+        "200": { description: Membership created }
+        "400": { description: Token expired or already used }
+        "403": { description: Invitation was issued to a different email address }
+
+  /api/v1/oauth-clients:
+    post:
+      tags: [OAuth Clients]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/TenantHeader" }]
+      summary: Provision a new Server-to-Server (M2M) credential (Owner/Admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                scopes:
+                  type: array
+                  items:
+                    type: string
+                    enum: [events:read, events:write, registrations:read, timing:write, tenant:read]
+      responses:
+        "201":
+          description: >
+            Client created. client_secret is returned exactly once here and
+            never again - only its hash is stored.
+    get:
+      tags: [OAuth Clients]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/TenantHeader" }
+        - { $ref: "#/components/parameters/PageLimit" }
+        - { $ref: "#/components/parameters/PageCursor" }
+      summary: >-
+        List the resolved tenant's M2M clients (Owner/Admin only, secrets
+        never included), paginated
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PagedEnvelope" }
+
+  /api/v1/oauth-clients/{id}:
+    delete:
+      tags: [OAuth Clients]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/TenantHeader" }
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      summary: Revoke an M2M credential (Owner/Admin only)
+      responses:
+        "204": { description: Client revoked }
+
+  /api/v1/storage/objects/upload-url:
+    post:
+      tags: [Object Storage]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/TenantHeader" }]
+      summary: Provision a presigned upload URL (Owner/Admin only)
+      description: >
+        Implements the implementation guide's §3/§6 Object Storage
+        deliverable: a time-limited URL the caller PUTs raw bytes to
+        directly. What upload_url points at, and what to do after PUTting
+        to it, depends on the deployment's STORAGE_DRIVER:
+        with the `local` driver (default), it is an HMAC-signed URL back at
+        this API's own `PUT /api/v1/storage/objects/...` endpoint
+        (unauthenticated at that second request - the signature itself is
+        the authorization, the same possession-of-a-secret pattern used
+        for invitation tokens and OAuth client secrets elsewhere in this
+        API), bytes are encrypted at rest (AES-256-GCM) before they ever
+        touch disk, and the object is marked stored automatically the
+        moment that PUT finishes - no further call is needed.
+        With the `r2` driver, it is a real Cloudflare R2/S3 SigV4 URL
+        pointing straight at the bucket (this server is bypassed
+        entirely for that PUT, so no app-level encryption is applied -
+        R2's own at-rest encryption is relied on instead), and the caller
+        MUST call `POST .../storage/objects/complete-upload` with the same
+        bucket/key after the PUT succeeds - this server has no other way
+        to learn the upload happened.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [bucket, key]
+              properties:
+                bucket:
+                  type: string
+                  enum: [public, private]
+                  description: >-
+                    public: tenant logos/photo thumbnails, meant to sit
+                    behind a CDN, readable via an unsigned URL. private:
+                    raw CSVs, high-res photo originals, BIB/certificate
+                    PDFs - readable only via a presigned URL.
+                key:
+                  type: string
+                  description: Object key/path within the bucket, e.g. logos/main.png.
+                content_type:
+                  type: string
+                  default: application/octet-stream
+      responses:
+        "200":
+          description: Upload ticket issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      upload_url: { type: string, description: "Relative URL - PUT the raw file bytes here." }
+                      expires_at: { type: string, format: date-time }
+                      bucket: { type: string }
+                      key: { type: string }
+        "403": { description: Caller is below Admin }
+
+  /api/v1/storage/objects/complete-upload:
+    post:
+      tags: [Object Storage]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/TenantHeader" }]
+      summary: Confirm a direct-to-bucket upload finished (Owner/Admin only, STORAGE_DRIVER=r2 only)
+      description: >
+        Required only when the deployment's STORAGE_DRIVER is `r2` - see
+        upload-url's description above. Call this once the client's PUT to
+        the r2 upload_url has completed; it HEADs the object on the bucket
+        to confirm it actually landed and learn its size, then marks it
+        stored. Calling this while STORAGE_DRIVER=local returns 400 (that
+        driver completes uploads automatically - see upload-url above).
+        No plaintext ever reaches this server for an r2-driver upload, so
+        the stored object's sha256 is left null.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [bucket, key]
+              properties:
+                bucket: { type: string, enum: [public, private] }
+                key: { type: string }
+      responses:
+        "200":
+          description: Upload confirmed and marked stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      stored: { type: boolean }
+                      size_bytes: { type: integer }
+        "400": { description: "No object found at that bucket/key (nothing was PUT yet), or STORAGE_DRIVER is not r2" }
+        "403": { description: Caller is below Admin }
+
+  /api/v1/storage/objects/download-url:
+    get:
+      tags: [Object Storage]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/TenantHeader" }
+        - name: bucket
+          in: query
+          required: true
+          schema: { type: string, enum: [public, private] }
+        - name: key
+          in: query
+          required: true
+          schema: { type: string }
+      summary: Resolve a way to fetch an object (any active tenant member)
+      description: >
+        For the private bucket, returns a time-limited presigned GET URL,
+        only after confirming - via a tenant-scoped, Row-Level-Security-
+        backed lookup - that the object belongs to the caller's own
+        tenant. For the public bucket, returns the stable, unsigned URL
+        directly (expires_at omitted).
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      url: { type: string }
+                      expires_at: { type: string, format: date-time, description: Omitted for the public bucket. }
+        "404": { description: "No such object under the caller's tenant, or upload not yet completed" }
+
+  /api/v1/storage/objects:
+    get:
+      tags: [Object Storage]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/TenantHeader" }
+        - { $ref: "#/components/parameters/PageLimit" }
+        - { $ref: "#/components/parameters/PageCursor" }
+      summary: List the resolved tenant's stored objects, paginated
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PagedEnvelope" }
+
+  /api/v1/storage/objects/{bucket}/{tenantId}/{key}:
+    put:
+      tags: [Object Storage]
+      summary: Upload raw object bytes to a presigned URL (STORAGE_DRIVER=local only)
+      description: >
+        Only reachable when the deployment's STORAGE_DRIVER is `local` -
+        under `r2`, upload_url points straight at the bucket instead (see
+        upload-url's description above), and a request here returns 501.
+        Deliberately unauthenticated at this HTTP layer - reached only via
+        the upload_url returned by POST .../storage/objects/upload-url,
+        whose ?expires=&sig= query parameters this endpoint verifies
+        before writing anything. Body size is capped (25 MiB in this
+        deployment); see StorageHandler's doc comment for why that ceiling
+        exists and where it would need to grow for Phase 1 bulk uploads.
+      parameters:
+        - { name: bucket, in: path, required: true, schema: { type: string, enum: [public, private] } }
+        - { name: tenantId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: key, in: path, required: true, schema: { type: string }, description: "May itself contain further /-separated path segments." }
+        - { name: expires, in: query, required: true, schema: { type: integer }, description: Unix timestamp the signature expires at. }
+        - { name: sig, in: query, required: true, schema: { type: string }, description: HMAC-SHA256 signature over method+bucket+tenant+key+expires. }
+      requestBody:
+        required: true
+        content:
+          "*/*":
+            schema: { type: string, format: binary }
+      responses:
+        "200": { description: "Bytes stored and encrypted at rest. Body: {\"data\":{\"stored\":true,\"sha256\":\"...\",\"size_bytes\":...}}" }
+        "403": { description: "Signature missing, invalid, or does not match this bucket/tenant/key/method" }
+        "410": { description: Signature expired }
+        "413": { description: Body exceeds the upload size limit }
+        "501": { description: "STORAGE_DRIVER is not local - this endpoint does not apply" }
+    get:
+      tags: [Object Storage]
+      summary: Download raw, decrypted object bytes (STORAGE_DRIVER=local only)
+      description: >
+        Only reachable when the deployment's STORAGE_DRIVER is `local` -
+        under `r2`, download-url/upload-url's public URL point straight at
+        the bucket instead, and a request here returns 501. For the public
+        bucket this needs no ?expires=/&sig= at all (see PublicURL's doc
+        comment - it is meant to be world-readable, e.g. behind a CDN);
+        for the private bucket a valid, unexpired signature from a
+        download-url response is required.
+      parameters:
+        - { name: bucket, in: path, required: true, schema: { type: string, enum: [public, private] } }
+        - { name: tenantId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: key, in: path, required: true, schema: { type: string } }
+        - { name: expires, in: query, required: false, schema: { type: integer } }
+        - { name: sig, in: query, required: false, schema: { type: string } }
+      responses:
+        "200": { description: "The decrypted object bytes, with the Content-Type recorded at upload time." }
+        "403": { description: "Signature missing, invalid, or does not match this bucket/tenant/key/method (private bucket only)" }
+        "404": { description: "No such object, or its upload never completed" }
+        "410": { description: Signature expired }
+        "501": { description: "STORAGE_DRIVER is not local - this endpoint does not apply" }
+
+  /oauth/token:
+    post:
+      tags: [OAuth2]
+      summary: OAuth 2.0 Client Credentials grant (RFC 6749 §4.4)
+      description: >
+        Accepts application/x-www-form-urlencoded (RFC-standard, also
+        supports HTTP Basic auth for the client credentials) or
+        application/json. Rate limited both per source IP (brute-force
+        protection) and per client_id (steady-state throttling).
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [grant_type, client_id, client_secret]
+              properties:
+                grant_type: { type: string, enum: [client_credentials] }
+                client_id: { type: string }
+                client_secret: { type: string }
+                scope: { type: string, description: "Space-separated; must be a subset of the client's granted scopes." }
+      responses:
+        "200":
+          description: Access token issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      access_token: { type: string }
+                      token_type: { type: string, example: Bearer }
+                      expires_in: { type: integer, example: 3599 }
+                      scope: { type: string }
+        "401": { description: Invalid client_id/client_secret or revoked client }
+        "429": { description: Rate limited }
+
+  /api/v1/tenant/summary:
+    get:
+      tags: [Tenants]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/TenantHeader" }]
+      summary: Demo tenant-scoped resource (User session)
+      description: >
+        Minimal protected resource used to demonstrate end to end that a
+        caller only ever sees its own tenant's data (Phase 0 deliverable:
+        tenant isolation proven over both a User session and an M2M
+        token). See /api/v1/m2m/tenant/summary for the M2M-authenticated
+        equivalent.
+      responses:
+        "200": { description: OK }
+
+  /api/v1/m2m/tenant/summary:
+    get:
+      tags: [Tenants]
+      security: [{ oauth2ClientCredentials: [] }]
+      summary: Demo tenant-scoped resource (M2M / Server-to-Server)
+      description: Requires the `tenant:read` scope. tenant_id is taken from the M2M access token's claims, never from a client-supplied header.
+      responses:
+        "200": { description: OK }
+
+  /api/v1/admin/tenants/{id}/status:
+    patch:
+      tags: [Platform Verification]
+      security: [{ bearerAuth: [] }]
+      summary: Approve, reject, or suspend a tenant (Platform Super Admin only)
+      description: >
+        Implements the PRD's "verifikasi organizer" capability. Gated twice:
+        RequireSuperAdmin at the router, and the acting user's
+        is_super_admin flag re-checked inside the service as the real
+        enforcement. Rejecting or suspending requires a non-empty `reason`,
+        surfaced back on the tenant as `status_reason` (cleared on
+        reactivation to `active`) and recorded in full in `audit_logs`
+        (`tenant.status_changed`).
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, description: "One of active, rejected, suspended." }
+                reason: { type: string, description: "Required when status is rejected or suspended." }
+      responses:
+        "200": { description: Tenant status updated }
+        "400": { description: "Invalid status value, or reason missing for rejected/suspended" }
+        "403": { description: Caller is not a Platform Super Admin }
+        "404": { description: No such tenant }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: A `user_access` JWT from /api/v1/auth/login, /refresh, or the Google callback.
+    oauth2ClientCredentials:
+      type: oauth2
+      flows:
+        clientCredentials:
+          tokenUrl: /oauth/token
+          scopes:
+            events:read: Read event data
+            events:write: Create/modify event data
+            registrations:read: Read registration data
+            timing:write: Push timing results
+            tenant:read: Read tenant-level metadata
+
+  parameters:
+    TenantHeader:
+      name: X-Tenant-ID
+      in: header
+      required: true
+      description: >
+        Which tenant workspace to act as. Verified against the caller's
+        active tenant_members row before the request proceeds - the header
+        only *declares* intent, it does not grant access by itself.
+      schema: { type: string, format: uuid }
+
+    PageLimit:
+      name: limit
+      in: query
+      required: false
+      description: >-
+        Max items per page (default 20, max 100). Every paginated list
+        endpoint in this API uses cursor (keyset), not offset, pagination -
+        see PagedEnvelope.
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+
+    PageCursor:
+      name: cursor
+      in: query
+      required: false
+      description: >-
+        Opaque continuation token from a previous page's data.next_cursor.
+        Omit to fetch the first page. Treat the value as opaque; its
+        encoding is not part of this API's contract.
+      schema: { type: string }
+
+  schemas:
+    Envelope:
+      type: object
+      description: >
+        Every response is wrapped as a data envelope on success, or an
+        error envelope with a stable machine-readable code on failure.
+      properties:
+        data: {}
+        error:
+          type: object
+          properties:
+            code: { type: string }
+            message: { type: string }
+
+    PagedEnvelope:
+      type: object
+      description: >
+        The Envelope shape used by every paginated list endpoint. Pages are
+        cursor-based (not offset/page-number): re-issue the same request
+        with cursor set to next_cursor to fetch the following page, and
+        stop once next_cursor is absent - "jump to page N" is not
+        supported, by design (see the pagination convention note in
+        README.md).
+      properties:
+        data:
+          type: object
+          properties:
+            items:
+              type: array
+              items: {}
+            next_cursor:
+              type: string
+              description: Absent once the last page has been reached.

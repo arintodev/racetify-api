@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS photo_tags;
+DROP TABLE IF EXISTS photos;
+DROP TABLE IF EXISTS albums;

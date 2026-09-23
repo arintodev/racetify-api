@@ -1,0 +1,141 @@
+name: racetify
+
+# All ${VAR} substitutions below come from ONE source: the .env file in this
+# same directory (copied from .env.example - `cp .env.example .env`) - the
+# exact same file internal/config's loadDotEnv reads for `go run`/`make`.
+# Compose loads it automatically because it's named `.env` and sits next to
+# this file; nothing here needs an `env_file:` key or any other pointer to
+# it, and there's no separate/second env file for Compose. Run `docker
+# compose up` from this directory (or `docker compose --env-file <path>` to
+# point at a different one, e.g. for CI) and both the Go binaries and these
+# containers stay in sync from the one file.
+#
+# None of the substitutions below carry a `${VAR:-default}` fallback -
+# .env.example's dev defaults are written once, in .env.example itself, not
+# duplicated a second time as inline fallbacks here. .env (copied from
+# .env.example, see Quick start in README.md) is the one required source. If
+# a var is missing from it, Compose substitutes an empty string and only
+# prints a warning - `docker compose up` still runs - so a genuinely missing
+# var shows up as a broken connection string, not a clear error. Make sure
+# .env exists and is complete before running this.
+#
+# A couple of values are still written here directly rather than
+# substituted, because they're intentionally different inside the Docker
+# network than in .env.example's host-based defaults (e.g. REDIS_ADDR:
+# redis:6379 here vs. localhost:6379 for `go run`/`make` on the host) -
+# substituting those from .env would silently break container-to-container
+# networking.
+
+services:
+  # DB_NAME/DB_MIGRATOR_USER/DB_MIGRATOR_PASSWORD name the database and the
+  # Postgres bootstrap superuser this service starts with - used by
+  # `migrate` below (via DATABASE_MIGRATOR_URL) to connect with DDL rights.
+  # Kept as the same ${...} substitution as the app/admin roles below so
+  # these are written once, not duplicated between this service and
+  # `migrate`/`api`.
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${DB_MIGRATOR_USER}
+      POSTGRES_PASSWORD: ${DB_MIGRATOR_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    ports:
+      - "5432:5432"
+    volumes:
+      - racetify_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_MIGRATOR_USER} -d ${DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # One-shot job: applies migrations (schema + RLS policies + the two
+  # generic app/admin roles named by DB_APP_ROLE/DB_ADMIN_ROLE below) as
+  # the Postgres bootstrap superuser, then exits. `api` waits for this to
+  # complete successfully before it starts - it never runs migrations
+  # itself (see config.DBConfig.MigratorDSN's doc comment).
+  #
+  # DB_APP_ROLE/DB_APP_ROLE_PASSWORD/DB_ADMIN_ROLE/DB_ADMIN_ROLE_PASSWORD
+  # below are the single source of truth for these two roles' credentials
+  # - Compose substitutes ${...} from a .env file in this directory (or the
+  # real shell environment) at `docker compose up` time, so `api`'s
+  # DATABASE_URL/DATABASE_ADMIN_URL further down are built from the exact
+  # same values instead of a second hardcoded copy. No fallback default is
+  # given here (see the top-of-file note) - if .env is missing one of
+  # these, Compose substitutes an empty string. Unlike Go's dbDSN
+  # (internal/config/config.go), Compose does NOT url-encode this
+  # substitution - a password with a reserved URL character (":", "/",
+  # "@", ...) would break the DSNs built below, so keep passwords used
+  # here alnum/underscore, or set DATABASE_URL/DATABASE_ADMIN_URL directly
+  # instead.
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["/app/migrate"]
+    environment:
+      DATABASE_MIGRATOR_URL: postgres://${DB_MIGRATOR_USER}:${DB_MIGRATOR_PASSWORD}@postgres:5432/${DB_NAME}?sslmode=disable
+      DB_APP_ROLE: ${DB_APP_ROLE}
+      DB_APP_ROLE_PASSWORD: ${DB_APP_ROLE_PASSWORD}
+      DB_ADMIN_ROLE: ${DB_ADMIN_ROLE}
+      DB_ADMIN_ROLE_PASSWORD: ${DB_ADMIN_ROLE_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      # Container side tracks ${HTTP_PORT} (what the app actually listens
+      # on) rather than a second hardcoded "8080" - change HTTP_PORT in
+      # .env and this mapping follows it. The host side (left) is your own
+      # choice of local port and stays fixed here.
+      - "8080:${HTTP_PORT}"
+    environment:
+      APP_ENV: ${APP_ENV}
+      HTTP_PORT: ${HTTP_PORT}
+      # Built from the same DB_APP_ROLE/DB_ADMIN_ROLE/DB_NAME vars `migrate`
+      # above provisions the roles/database from - see that service's
+      # comment.
+      DATABASE_URL: postgres://${DB_APP_ROLE}:${DB_APP_ROLE_PASSWORD}@postgres:5432/${DB_NAME}?sslmode=disable
+      DATABASE_ADMIN_URL: postgres://${DB_ADMIN_ROLE}:${DB_ADMIN_ROLE_PASSWORD}@postgres:5432/${DB_NAME}?sslmode=disable
+      # Docker-internal hostname, not the host-based localhost:6379 in
+      # .env.example - intentionally NOT substituted from .env (see the
+      # top-of-file note).
+      REDIS_ADDR: redis:6379
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ISSUER: ${JWT_ISSUER}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
+      # "local" (default) or "r2" - see .env.example's Object Storage
+      # section and internal/platform/objectstorage's package doc. The
+      # STORAGE_R2_* vars below are only read when this is "r2"; leave
+      # them blank for "local".
+      STORAGE_DRIVER: ${STORAGE_DRIVER}
+      STORAGE_R2_ACCOUNT_ID: ${STORAGE_R2_ACCOUNT_ID}
+      STORAGE_R2_ENDPOINT: ${STORAGE_R2_ENDPOINT}
+      STORAGE_R2_ACCESS_KEY_ID: ${STORAGE_R2_ACCESS_KEY_ID}
+      STORAGE_R2_ACCESS_KEY_SECRET: ${STORAGE_R2_ACCESS_KEY_SECRET}
+      STORAGE_R2_BUCKET: ${STORAGE_R2_BUCKET}
+      STORAGE_R2_PUBLIC_BASE_URL: ${STORAGE_R2_PUBLIC_BASE_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  racetify_postgres_data:
