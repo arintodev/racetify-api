@@ -56,21 +56,35 @@ func parseDateOnly(s string) (*time.Time, error) {
 }
 
 type RaceDTO struct {
-	ID         string   `json:"id"`
-	EventID    string   `json:"event_id"`
-	Name       string   `json:"name"`
-	Slug       string   `json:"slug"`
-	DistanceKM *float64 `json:"distance_km,omitempty"`
-	CreatedAt  string   `json:"created_at"`
+	ID              string    `json:"id"`
+	EventID         string    `json:"event_id"`
+	Name            string    `json:"name"`
+	Slug            string    `json:"slug"`
+	DistanceKM      *float64  `json:"distance_km,omitempty"`
+	EntryType       string    `json:"entry_type"`
+	CourseType      string    `json:"course_type"`
+	TeamSize        *int      `json:"team_size,omitempty"`
+	LoopMode        *LoopMode `json:"loop_mode,omitempty"`
+	LoopLengthKM    *float64  `json:"loop_length_km,omitempty"`
+	LoopTargetLaps  *int      `json:"loop_target_laps,omitempty"`
+	LoopTimeLimitMS *int64    `json:"loop_time_limit_ms,omitempty"`
+	CreatedAt       string    `json:"created_at"`
 }
 
 func raceResponse(r *Race) RaceDTO {
 	return RaceDTO{
-		ID:         r.ID,
-		EventID:    r.EventID,
-		Name:       r.Name,
-		Slug:       r.Slug,
-		DistanceKM: r.DistanceKM,
-		CreatedAt:  r.CreatedAt.Format(time.RFC3339),
+		ID:              r.ID,
+		EventID:         r.EventID,
+		Name:            r.Name,
+		Slug:            r.Slug,
+		DistanceKM:      r.DistanceKM,
+		EntryType:       string(r.EntryType),
+		CourseType:      string(r.CourseType),
+		TeamSize:        r.TeamSize,
+		LoopMode:        r.LoopMode,
+		LoopLengthKM:    r.LoopLengthKM,
+		LoopTargetLaps:  r.LoopTargetLaps,
+		LoopTimeLimitMS: r.LoopTimeLimitMS,
+		CreatedAt:       r.CreatedAt.Format(time.RFC3339),
 	}
 }

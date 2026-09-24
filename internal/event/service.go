@@ -250,7 +250,7 @@ func (s *Service) SetEventStatus(ctx context.Context, tenantID, actorUserID stri
 
 // ==================== races ====================
 
-func (s *Service) CreateRace(ctx context.Context, tenantID, eventID, actorUserID string, actorRole rbac.MemberRole, name, slug string, distanceKM *float64) (*Race, error) {
+func (s *Service) CreateRace(ctx context.Context, tenantID, eventID, actorUserID string, actorRole rbac.MemberRole, name, slug string, distanceKM *float64, format RaceFormat) (*Race, error) {
 	if !actorRole.IsAtLeast(rbac.RoleAdmin) {
 		return nil, domain.ErrForbidden
 	}
@@ -265,6 +265,10 @@ func (s *Service) CreateRace(ctx context.Context, tenantID, eventID, actorUserID
 	if slug == "" {
 		return nil, fmt.Errorf("service: %w: race name/slug must contain at least one alphanumeric character", domain.ErrInvalidState)
 	}
+	format.Normalize()
+	if err := format.Validate(); err != nil {
+		return nil, err
+	}
 
 	now := time.Now().UTC()
 	race := &Race{
@@ -274,9 +278,11 @@ func (s *Service) CreateRace(ctx context.Context, tenantID, eventID, actorUserID
 		Name:       name,
 		Slug:       slug,
 		DistanceKM: distanceKM,
+		RaceFormat: format,
 		CreatedAt:  now,
 		UpdatedAt:  now,
 	}
+	race.clearUnfixedDistance()
 
 	err := s.db.WithTenantTx(ctx, tenantID, func(ctx context.Context) error {
 		// Confirm the parent event exists (and belongs to this tenant)
@@ -322,6 +328,48 @@ type RacePatch struct {
 	Name       *string
 	Slug       *string
 	DistanceKM *float64
+
+	EntryType       *RaceEntryType
+	CourseType      *RaceCourseType
+	TeamSize        *int
+	LoopMode        *LoopMode
+	LoopLengthKM    *float64
+	LoopTargetLaps  *int
+	LoopTimeLimitMS *int64
+}
+
+// applyFormat overlays the supplied format fields onto f.
+func (p RacePatch) applyFormat(f *RaceFormat) {
+	if p.EntryType != nil {
+		f.EntryType = *p.EntryType
+	}
+	if p.CourseType != nil {
+		f.CourseType = *p.CourseType
+	}
+	if p.TeamSize != nil {
+		f.TeamSize = p.TeamSize
+	}
+	if p.LoopMode != nil {
+		f.LoopMode = p.LoopMode
+	}
+	if p.LoopLengthKM != nil {
+		f.LoopLengthKM = p.LoopLengthKM
+	}
+	if p.LoopTargetLaps != nil {
+		f.LoopTargetLaps = p.LoopTargetLaps
+	}
+	if p.LoopTimeLimitMS != nil {
+		f.LoopTimeLimitMS = p.LoopTimeLimitMS
+	}
+}
+
+// clearUnfixedDistance drops distance_km for a time-limited loop race:
+// its distance isn't known until the race is run
+// (docs/team-loop-participants-plan.md §3.1).
+func (r *Race) clearUnfixedDistance() {
+	if r.CourseType == RaceCourseLoop && r.LoopMode != nil && *r.LoopMode == LoopModeTimeLimit {
+		r.DistanceKM = nil
+	}
 }
 
 func (s *Service) UpdateRace(ctx context.Context, tenantID, eventID, actorUserID string, actorRole rbac.MemberRole, id string, patch RacePatch) (*Race, error) {
@@ -351,6 +399,25 @@ func (s *Service) UpdateRace(ctx context.Context, tenantID, eventID, actorUserID
 		if patch.DistanceKM != nil {
 			current.DistanceKM = patch.DistanceKM
 		}
+
+		format := current.RaceFormat
+		patch.applyFormat(&format)
+		format.Normalize()
+		if err := format.Validate(); err != nil {
+			return err
+		}
+		if !format.Equal(current.RaceFormat) {
+			hasParticipants, err := s.repo.RaceHasParticipants(ctx, tenantID, current.ID)
+			if err != nil {
+				return err
+			}
+			if hasParticipants {
+				return fmt.Errorf("service: %w: race format cannot change once the race has participants", domain.ErrInvalidState)
+			}
+			current.RaceFormat = format
+		}
+		current.clearUnfixedDistance()
+
 		if err := s.repo.UpdateRace(ctx, current); err != nil {
 			return err
 		}

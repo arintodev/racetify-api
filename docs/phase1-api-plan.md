@@ -72,6 +72,7 @@ documented reasoning), `set_updated_at` trigger on every mutable table.
 | `0008_generator_templates.up.sql` | `generator_templates` | `tenant_id` + `event_id` + nullable `race_id` (race-specific override) + `storage_id` FK → `objects(id)` — see the settled storage-design note below §2 for why the FK is back. `service`: `bib` \| `certificate`. `metadata JSONB` for placeholder-field bookkeeping (which `{{TOKENS}}` the SVG uses). |
 | `0009_media_gallery.up.sql` | `albums`, `photos`, `photo_tags` | All `tenant_id`-scoped + RLS. `photos.original_storage_id` FK → `objects(id)` (private bucket, high-res) and `photos.thumbnail_storage_id` FK → `objects(id)` (public bucket, watermarked; nullable until the thumbnail job finishes). `photos.ocr_status`: `pending` \| `processed` \| `failed`. `photo_tags.bib_string`/`bib_number` exactly as the guide specifies, plus `confidence_score` and `source`: `ocr` \| `manual` (so a manual correction is distinguishable from a machine tag in the audit trail and in the "needs review" query). |
 | `0010_jobs.up.sql` | `jobs` | Generic async-job table, tenant-scoped + RLS, shared by all three async flows below rather than one table per job type: `id, tenant_id, type, status, payload JSONB, result JSONB, error TEXT, progress_current, progress_total, created_by, created_at, updated_at, started_at, finished_at`. `status`: `queued` \| `processing` \| `completed` \| `completed_with_errors` \| `failed`. `type`: `participants.import` \| `generator.bib_batch` \| `media.photo_process`. Mirrors the README's own prediction: "the `objects` table's `status` column ... are patterns a job-status column ... can mirror directly." |
+| `0013_participant_ref_id.up.sql` | `participants.ref_id` | Optional `TEXT` reference ID from the organizer's registration system (order/ticket number), unique per event when present (partial unique index `(event_id, ref_id) WHERE ref_id IS NOT NULL`). The registration import's primary match key when mapped — see §4.2. |
 
 **Storage location design — settled, after two revisions.** Worth
 recording how this landed, since it moved twice: draft 1 put
@@ -282,6 +283,22 @@ Staff rather than Admin, unlike Storage's current Admin-only upload gate).
 | `POST /api/v1/events/{id}/participants/import/preview` | Staff | Body: `object_id` of an already-uploaded CSV (via the existing Storage `upload-url`/`PUT` flow). **Synchronous** — just parses headers + first N rows, returns them for the Column Mapping UI. No DB writes. |
 | `POST /api/v1/events/{id}/participants/import` | Staff | Body: `object_id`, `column_mapping`, `mode: registration \| results`. Validates mapping, then enqueues a `participants.import` job and returns `202 {job_id}`. `mode=results` is the post-race upsert-by-`bib_number` path (`net_time`/`gun_time`/`overall_rank`/`category_rank`); `mode=registration` is the pre-race insert/identify-duplicates path. |
 | `POST /api/v1/m2m/events/{id}/results` | `timing:write` | Bulk upsert by `bib_number`, same semantics as `mode=results` above but for a timing system that pushes directly instead of exporting CSV — this is the scope Phase 0 already named for exactly this use case. |
+
+**Matching an import row to an existing participant (`mode=registration`).**
+A row is matched on `ref_id` first, when the column is mapped and the
+cell is non-empty, and on `bib_number` otherwise:
+
+| Match | Outcome |
+|---|---|
+| `ref_id` matches, same BIB | Existing participant (skip or update, per the import's option) |
+| `ref_id` matches, different BIB | Existing participant whose **BIB changed**; reported as such in the preview. The update is rejected if the new BIB already belongs to someone else in the event |
+| `ref_id` is new, BIB free | New participant |
+| `ref_id` is new, BIB taken by a participant with a different `ref_id` | Error: BIB belongs to another registration |
+| `ref_id` is new, BIB taken by a participant with no `ref_id` | Existing participant (matched by BIB); an update fills in its `ref_id` |
+| No `ref_id` in the row | Match by `bib_number`, as before |
+
+`mode=results` (and the M2M results push) keep matching on `bib_number`
+only, since timing systems only know the BIB.
 
 ### 4.3 Generator (Templates, BIB, E-Certificate)
 

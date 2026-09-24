@@ -174,6 +174,33 @@ type createRaceRequest struct {
 	Name       string   `json:"name"`
 	Slug       string   `json:"slug"`
 	DistanceKM *float64 `json:"distance_km"`
+	raceFormatRequest
+}
+
+// raceFormatRequest is the race format part of a create/update body
+// (docs/team-loop-participants-plan.md §3.1). Every field is optional:
+// on create an omitted entry_type/course_type defaults to
+// individual/standard, on update nil means "leave unchanged".
+type raceFormatRequest struct {
+	EntryType       *RaceEntryType  `json:"entry_type"`
+	CourseType      *RaceCourseType `json:"course_type"`
+	TeamSize        *int            `json:"team_size"`
+	LoopMode        *LoopMode       `json:"loop_mode"`
+	LoopLengthKM    *float64        `json:"loop_length_km"`
+	LoopTargetLaps  *int            `json:"loop_target_laps"`
+	LoopTimeLimitMS *int64          `json:"loop_time_limit_ms"`
+}
+
+func (f raceFormatRequest) patch() RacePatch {
+	return RacePatch{
+		EntryType:       f.EntryType,
+		CourseType:      f.CourseType,
+		TeamSize:        f.TeamSize,
+		LoopMode:        f.LoopMode,
+		LoopLengthKM:    f.LoopLengthKM,
+		LoopTargetLaps:  f.LoopTargetLaps,
+		LoopTimeLimitMS: f.LoopTimeLimitMS,
+	}
 }
 
 // CreateRace handles POST /api/v1/events/{id}/races. Requires
@@ -193,7 +220,10 @@ func (h *Handler) CreateRace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	race, err := h.events.CreateRace(r.Context(), tenantID, eventID, actorUserID, rbac.MemberRole(actorRoleStr), req.Name, req.Slug, req.DistanceKM)
+	var format RaceFormat
+	req.patch().applyFormat(&format)
+
+	race, err := h.events.CreateRace(r.Context(), tenantID, eventID, actorUserID, rbac.MemberRole(actorRoleStr), req.Name, req.Slug, req.DistanceKM, format)
 	if err != nil {
 		respond.FromServiceError(w, err)
 		return
@@ -223,6 +253,7 @@ type updateRaceRequest struct {
 	Name       *string  `json:"name"`
 	Slug       *string  `json:"slug"`
 	DistanceKM *float64 `json:"distance_km"`
+	raceFormatRequest
 }
 
 // UpdateRace handles PATCH /api/v1/events/{id}/races/{raceId}. Requires
@@ -239,9 +270,10 @@ func (h *Handler) UpdateRace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	race, err := h.events.UpdateRace(r.Context(), tenantID, eventID, actorUserID, rbac.MemberRole(actorRoleStr), raceID, RacePatch{
-		Name: req.Name, Slug: req.Slug, DistanceKM: req.DistanceKM,
-	})
+	patch := req.patch()
+	patch.Name, patch.Slug, patch.DistanceKM = req.Name, req.Slug, req.DistanceKM
+
+	race, err := h.events.UpdateRace(r.Context(), tenantID, eventID, actorUserID, rbac.MemberRole(actorRoleStr), raceID, patch)
 	if err != nil {
 		respond.FromServiceError(w, err)
 		return

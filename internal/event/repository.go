@@ -148,13 +148,19 @@ func scanEvent(row dbutil.RowScanner) (*Event, error) {
 
 // ==================== races ====================
 
-const raceColumns = `id, tenant_id, event_id, name, slug, distance_km, created_at, updated_at`
+const raceColumns = `id, tenant_id, event_id, name, slug, distance_km,
+	entry_type, course_type, team_size,
+	loop_mode, loop_length_km, loop_target_laps, loop_time_limit_ms,
+	created_at, updated_at`
 
 func (r *Repository) CreateRace(ctx context.Context, race *Race) error {
 	_, err := r.db.Q(ctx).ExecContext(ctx, `
-		INSERT INTO races (id, tenant_id, event_id, name, slug, distance_km, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		race.ID, race.TenantID, race.EventID, race.Name, race.Slug, race.DistanceKM, race.CreatedAt, race.UpdatedAt,
+		INSERT INTO races (`+raceColumns+`)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+		race.ID, race.TenantID, race.EventID, race.Name, race.Slug, race.DistanceKM,
+		race.EntryType, race.CourseType, race.TeamSize,
+		race.LoopMode, race.LoopLengthKM, race.LoopTargetLaps, race.LoopTimeLimitMS,
+		race.CreatedAt, race.UpdatedAt,
 	)
 	if dbutil.IsUniqueViolation(err) {
 		return domain.ErrAlreadyExists
@@ -197,9 +203,13 @@ func (r *Repository) ListRaces(ctx context.Context, tenantID, eventID string) ([
 
 func (r *Repository) UpdateRace(ctx context.Context, race *Race) error {
 	res, err := r.db.Q(ctx).ExecContext(ctx, `
-		UPDATE races SET name = $4, slug = $5, distance_km = $6
+		UPDATE races SET name = $4, slug = $5, distance_km = $6,
+			entry_type = $7, course_type = $8, team_size = $9,
+			loop_mode = $10, loop_length_km = $11, loop_target_laps = $12, loop_time_limit_ms = $13
 		WHERE tenant_id = $1 AND event_id = $2 AND id = $3`,
 		race.TenantID, race.EventID, race.ID, race.Name, race.Slug, race.DistanceKM,
+		race.EntryType, race.CourseType, race.TeamSize,
+		race.LoopMode, race.LoopLengthKM, race.LoopTargetLaps, race.LoopTimeLimitMS,
 	)
 	if err != nil {
 		if dbutil.IsUniqueViolation(err) {
@@ -208,6 +218,18 @@ func (r *Repository) UpdateRace(ctx context.Context, race *Race) error {
 		return err
 	}
 	return dbutil.CheckRowsAffected(res)
+}
+
+// RaceHasParticipants reports whether any participant references the
+// race - UpdateRace refuses a format change once this is true
+// (docs/team-loop-participants-plan.md §4), since existing rows were
+// registered under the old format's rules.
+func (r *Repository) RaceHasParticipants(ctx context.Context, tenantID, raceID string) (bool, error) {
+	var exists bool
+	err := r.db.Q(ctx).QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM participants WHERE tenant_id = $1 AND race_id = $2)`,
+		tenantID, raceID).Scan(&exists)
+	return exists, err
 }
 
 // DeleteRace removes a race. "Only if no participants reference it"
@@ -233,7 +255,10 @@ func (r *Repository) DeleteRace(ctx context.Context, tenantID, eventID, id strin
 
 func scanRace(row dbutil.RowScanner) (*Race, error) {
 	race := &Race{}
-	err := row.Scan(&race.ID, &race.TenantID, &race.EventID, &race.Name, &race.Slug, &race.DistanceKM, &race.CreatedAt, &race.UpdatedAt)
+	err := row.Scan(&race.ID, &race.TenantID, &race.EventID, &race.Name, &race.Slug, &race.DistanceKM,
+		&race.EntryType, &race.CourseType, &race.TeamSize,
+		&race.LoopMode, &race.LoopLengthKM, &race.LoopTargetLaps, &race.LoopTimeLimitMS,
+		&race.CreatedAt, &race.UpdatedAt)
 	if err != nil {
 		return nil, dbutil.MapNotFound(err)
 	}
