@@ -16,14 +16,15 @@ import (
 // Config holds every tunable the service needs at boot. Fields are grouped
 // by subsystem to keep call sites self-documenting (cfg.HTTP.Port, etc).
 type Config struct {
-	Env     string // "development", "staging", "production"
-	HTTP    HTTPConfig
-	DB      DBConfig
-	Redis   RedisConfig
-	Auth    AuthConfig
-	Google  GoogleConfig
-	CORS    CORSConfig
-	Storage StorageConfig
+	Env      string // "development", "staging", "production"
+	HTTP     HTTPConfig
+	DB       DBConfig
+	Redis    RedisConfig
+	Auth     AuthConfig
+	Google   GoogleConfig
+	CORS     CORSConfig
+	Frontend FrontendConfig
+	Storage  StorageConfig
 }
 
 type HTTPConfig struct {
@@ -95,12 +96,27 @@ type AuthConfig struct {
 	// baseline called out in the implementation guide.
 	JWTSecret             string
 	Issuer                string
-	AccessTokenTTL        time.Duration // user session access token (15-30 min)
-	RefreshTokenTTL       time.Duration // user session refresh token (7-14 days)
+	AccessTokenTTL        time.Duration // user session access token (<= 10 min)
+	RefreshTokenTTL       time.Duration // user session idle expiry, re-derived on every rotation (7 days)
+	RefreshAbsoluteTTL    time.Duration // hard cap on a session from login, never extended by rotation (30 days)
+	RefreshGraceWindow    time.Duration // a just-rotated refresh token is still accepted this long (parallel BFF requests)
+	SignupOTPTTL          time.Duration // email-verification OTP lifetime
+	SignupTokenTTL        time.Duration // signup_token (OTP verified, profile pending) lifetime
+	SignupResendCooldown  time.Duration // minimum gap between OTP sends for one email
 	M2MTokenTTL           time.Duration // client_credentials access token (60 min)
 	EmailVerifyTokenTTL   time.Duration
 	InvitationTokenTTL    time.Duration
 	PasswordResetTokenTTL time.Duration
+
+	// CookieDomain is the Domain attribute of the session cookies. Set it to
+	// the parent domain the API and every frontend share (".racetify.com") so
+	// the browser talks to the API directly with first-party cookies. Empty
+	// (local dev) makes them host-only, which browsers still share across
+	// ports of one host (localhost:3001 <-> localhost:8080).
+	CookieDomain string
+	// CookieSecure sets the Secure attribute. On outside development; a plain
+	// http local setup needs it off.
+	CookieSecure bool
 }
 
 type GoogleConfig struct {
@@ -111,6 +127,16 @@ type GoogleConfig struct {
 
 type CORSConfig struct {
 	AllowedOrigins []string
+}
+
+// FrontendConfig lists the frontend origins the API may redirect a browser
+// to (Google sign-in) or point an emailed link at (invitations). Entries are
+// origins or wildcard patterns - see internal/platform/originpolicy - so a
+// platform with one host per tenant subdomain needs one entry, e.g.
+// "https://app.racetify.com,https://*.racetify.com". The first exact entry
+// is the default when a caller does not say which frontend it is.
+type FrontendConfig struct {
+	Origins []string
 }
 
 // StorageConfig configures the Object Storage module
@@ -197,12 +223,19 @@ func Load() (*Config, error) {
 		Auth: AuthConfig{
 			JWTSecret:             getEnv("JWT_SECRET", ""),
 			Issuer:                getEnv("JWT_ISSUER", "racetify"),
-			AccessTokenTTL:        getEnvDuration("ACCESS_TOKEN_TTL", 20*time.Minute),
-			RefreshTokenTTL:       getEnvDuration("REFRESH_TOKEN_TTL", 10*24*time.Hour),
+			AccessTokenTTL:        getEnvDuration("ACCESS_TOKEN_TTL", 10*time.Minute),
+			RefreshTokenTTL:       getEnvDuration("REFRESH_TOKEN_TTL", 7*24*time.Hour),
+			RefreshAbsoluteTTL:    getEnvDuration("REFRESH_ABSOLUTE_TTL", 30*24*time.Hour),
+			RefreshGraceWindow:    getEnvDuration("REFRESH_GRACE_WINDOW", 20*time.Second),
+			SignupOTPTTL:          getEnvDuration("SIGNUP_OTP_TTL", 10*time.Minute),
+			SignupTokenTTL:        getEnvDuration("SIGNUP_TOKEN_TTL", 15*time.Minute),
+			SignupResendCooldown:  getEnvDuration("SIGNUP_RESEND_COOLDOWN", 30*time.Second),
 			M2MTokenTTL:           getEnvDuration("M2M_TOKEN_TTL", 60*time.Minute),
 			EmailVerifyTokenTTL:   getEnvDuration("EMAIL_VERIFY_TOKEN_TTL", 24*time.Hour),
 			InvitationTokenTTL:    getEnvDuration("INVITATION_TOKEN_TTL", 7*24*time.Hour),
 			PasswordResetTokenTTL: getEnvDuration("PASSWORD_RESET_TOKEN_TTL", time.Hour),
+			CookieDomain:          getEnv("COOKIE_DOMAIN", ""),
+			CookieSecure:          getEnvBool("COOKIE_SECURE", getEnv("APP_ENV", "development") != "development"),
 		},
 		Google: GoogleConfig{
 			ClientID:     getEnv("GOOGLE_CLIENT_ID", ""),
@@ -211,6 +244,11 @@ func Load() (*Config, error) {
 		},
 		CORS: CORSConfig{
 			AllowedOrigins: splitCSV(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000")),
+		},
+		// Defaults to the CORS origins: in the common case the frontends that
+		// call the API are the ones it links back to.
+		Frontend: FrontendConfig{
+			Origins: splitCSV(getEnv("FRONTEND_ORIGINS", getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000"))),
 		},
 		Storage: StorageConfig{
 			Driver:           getEnv("STORAGE_DRIVER", "local"),
@@ -279,6 +317,15 @@ func getEnvInt(key string, fallback int) int {
 	if v, ok := os.LookupEnv(key); ok && v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
+		}
+	}
+	return fallback
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	if v, ok := os.LookupEnv(key); ok && v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
 		}
 	}
 	return fallback

@@ -19,7 +19,8 @@ func bearerToken(r *http.Request) (string, bool) {
 	return strings.TrimSpace(strings.TrimPrefix(h, prefix)), true
 }
 
-// RequireUserAuth verifies a `typ=user_access` JWT and rejects tokens that
+// RequireUserAuth verifies a `typ=user_access` JWT (from the Authorization
+// header, or a browser's access cookie) and rejects tokens that
 // were blacklisted by an explicit logout (see AuthService.Logout, passed
 // in here as isRevoked to avoid this package importing service - service
 // stays a strict "no net/http" layer). On success it stashes the user id,
@@ -33,9 +34,9 @@ func bearerToken(r *http.Request) (string, bool) {
 func RequireUserAuth(tokens *security.TokenManager, isRevoked func(ctx context.Context, jti string) bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			raw, ok := bearerToken(r)
+			raw, ok := userAccessToken(r)
 			if !ok {
-				respond.Error(w, http.StatusUnauthorized, "unauthorized", "Missing or malformed Authorization header.")
+				respond.Error(w, http.StatusUnauthorized, "unauthorized", "Not signed in.")
 				return
 			}
 			claims, err := tokens.Parse(raw)

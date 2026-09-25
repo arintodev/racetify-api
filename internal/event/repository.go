@@ -48,6 +48,13 @@ func (r *Repository) CreateEvent(ctx context.Context, e *Event) error {
 	return err
 }
 
+// GetEventBySlug finds an event by its per-tenant slug.
+func (r *Repository) GetEventBySlug(ctx context.Context, tenantID, slug string) (*Event, error) {
+	row := r.db.Q(ctx).QueryRowContext(ctx,
+		`SELECT `+eventColumns+` FROM events WHERE tenant_id = $1 AND slug = $2`, tenantID, slug)
+	return scanEvent(row)
+}
+
 func (r *Repository) GetEventByID(ctx context.Context, tenantID, id string) (*Event, error) {
 	row := r.db.Q(ctx).QueryRowContext(ctx,
 		`SELECT `+eventColumns+` FROM events WHERE tenant_id = $1 AND id = $2`, tenantID, id)

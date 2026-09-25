@@ -10,6 +10,7 @@ import (
 	"github.com/racetify/racetify-api/internal/audit"
 	"github.com/racetify/racetify-api/internal/auth"
 	"github.com/racetify/racetify-api/internal/domain"
+	"github.com/racetify/racetify-api/internal/invitepreview"
 	"github.com/racetify/racetify-api/internal/platform/pagination"
 	"github.com/racetify/racetify-api/internal/platform/rbac"
 	"github.com/racetify/racetify-api/internal/security"
@@ -58,6 +59,7 @@ func (s *Service) AssignToEvent(
 	label AssignmentLabel,
 	capabilities []string,
 	assignmentExpiresAt *time.Time,
+	linkOrigin string,
 ) (*EventAssignment, *EventInvitation, string, error) {
 	if !actorRole.IsAtLeast(rbac.RoleStaff) {
 		return nil, nil, "", domain.ErrForbidden
@@ -149,7 +151,7 @@ func (s *Service) AssignToEvent(
 		return nil, nil, "", err
 	}
 
-	_ = s.mailer.SendEventInvitationEmail(ctx, email, ev.Name, inviter.DisplayName(), eventInvitationLink(rawToken))
+	_ = s.mailer.SendEventInvitationEmail(ctx, email, ev.Name, inviter.DisplayName(), eventInvitationLink(linkOrigin, rawToken))
 	return nil, inv, rawToken, nil
 }
 
@@ -287,6 +289,34 @@ func (s *Service) MyAssignments(ctx context.Context, userID string) ([]EventAssi
 	return s.repo.MyAssignments(ctx, userID)
 }
 
-func eventInvitationLink(token string) string {
-	return fmt.Sprintf("https://app.racetify.id/invite/%s", token)
+func eventInvitationLink(origin, token string) string {
+	return strings.TrimRight(origin, "/") + "/invite/" + token
+}
+
+// PreviewInvitation implements invitepreview.Source for event (crew)
+// invitations.
+func (s *Service) PreviewInvitation(ctx context.Context, rawToken string) (*invitepreview.Preview, error) {
+	inv, err := s.repo.GetEventInvitationByTokenHash(ctx, security.HashToken(rawToken))
+	if err != nil {
+		return nil, err
+	}
+	var ev *Event
+	err = s.db.WithTenantTx(ctx, inv.TenantID, func(ctx context.Context) error {
+		var err error
+		ev, err = s.repo.GetEventByID(ctx, inv.TenantID, inv.EventID)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &invitepreview.Preview{
+		Kind:         invitepreview.KindEvent,
+		Name:         ev.Name,
+		EventSlug:    ev.Slug,
+		Label:        string(inv.Label),
+		Capabilities: inv.Capabilities,
+		Email:        inv.Email,
+		Status:       invitepreview.ResolveStatus(string(inv.Status), inv.ExpiresAt, time.Now().UTC()),
+		ExpiresAt:    inv.ExpiresAt,
+	}, nil
 }

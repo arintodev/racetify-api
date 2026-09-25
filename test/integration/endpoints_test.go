@@ -236,7 +236,7 @@ func TestAuthLoginAndSession(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("login: status %d: %+v", status, resp)
 	}
-	if resp.field(t, "access_token") == "" {
+	if c.accessFromCookie(t) == "" {
 		t.Fatalf("login: empty access_token")
 	}
 	var session struct {
@@ -344,7 +344,7 @@ func TestAuthRefreshAndLogout(t *testing.T) {
 	if loginStatus != http.StatusOK {
 		t.Fatalf("login: status %d: %+v", loginStatus, loginResp)
 	}
-	firstAccessToken := loginResp.field(t, "access_token")
+	firstAccessToken := cookieValue(loginHTTPResp.Cookies(), "racetify_access")
 	cookies := loginHTTPResp.Cookies()
 	if len(cookies) == 0 {
 		t.Fatalf("login response set no cookies (expected %s)", "racetify_refresh_token")
@@ -352,11 +352,11 @@ func TestAuthRefreshAndLogout(t *testing.T) {
 
 	// Refresh rotates the token and returns a new session.
 	refreshStatus, refreshResp, refreshHTTPResp := rawJSONDo(t, http.MethodPost, srv.URL+"/api/v1/auth/refresh",
-		map[string]string{"X-Forwarded-For": reg.ip}, cookies, nil)
+		map[string]string{"X-Forwarded-For": reg.ip, "Origin": "http://localhost:3000"}, cookies, nil)
 	if refreshStatus != http.StatusOK {
 		t.Fatalf("refresh: status %d: %+v", refreshStatus, refreshResp)
 	}
-	newAccessToken := refreshResp.field(t, "access_token")
+	newAccessToken := cookieValue(refreshHTTPResp.Cookies(), "racetify_access")
 	if newAccessToken == firstAccessToken {
 		t.Fatalf("refresh returned the same access token as login")
 	}
@@ -369,7 +369,7 @@ func TestAuthRefreshAndLogout(t *testing.T) {
 	// response territory: RefreshAccessToken revokes every session for the
 	// user and returns invalid_credentials.
 	reuseStatus, reuseResp, _ := rawJSONDo(t, http.MethodPost, srv.URL+"/api/v1/auth/refresh",
-		map[string]string{"X-Forwarded-For": reg.ip}, cookies, nil)
+		map[string]string{"X-Forwarded-For": reg.ip, "Origin": "http://localhost:3000"}, cookies, nil)
 	if reuseStatus != http.StatusUnauthorized {
 		t.Fatalf("reusing rotated-away refresh cookie: status %d, want 401: %+v", reuseStatus, reuseResp)
 	}
@@ -713,7 +713,7 @@ func TestTenantSuperAdminSetStatus(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("re-login after super-admin flip: status %d: %+v", status, resp)
 	}
-	admin.access = resp.field(t, "access_token")
+	admin.access = admin.accessFromCookie(t)
 
 	// Invalid status value.
 	status, resp = admin.do(t, http.MethodPatch, "/api/v1/admin/tenants/"+tenantID+"/status", nil,

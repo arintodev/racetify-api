@@ -19,6 +19,9 @@ type envelope struct {
 type errorBody struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	// Field names the request field a validation error concerns, when there
+	// is one, so a form can point at it.
+	Field string `json:"field,omitempty"`
 }
 
 func JSON(w http.ResponseWriter, status int, data any) {
@@ -36,6 +39,13 @@ func Error(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(envelope{Error: &errorBody{Code: code, Message: message}})
+}
+
+// ErrorWithField is Error for a failure tied to one request field.
+func ErrorWithField(w http.ResponseWriter, status int, code, message, field string) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(envelope{Error: &errorBody{Code: code, Message: message, Field: field}})
 }
 
 // FromServiceError maps the domain-level sentinel errors every service
@@ -59,6 +69,12 @@ func FromServiceError(w http.ResponseWriter, err error) {
 		Error(w, http.StatusBadRequest, "token_expired", "This token has expired.")
 	case errors.Is(err, domain.ErrTokenConsumed):
 		Error(w, http.StatusBadRequest, "token_consumed", "This token has already been used.")
+	case errors.Is(err, domain.ErrInvalidOTP):
+		Error(w, http.StatusBadRequest, "invalid_otp", "The verification code is invalid or has expired.")
+	case errors.Is(err, domain.ErrRateLimited):
+		Error(w, http.StatusTooManyRequests, "rate_limited", "Too many requests. Please wait a moment and try again.")
+	case errors.Is(err, domain.ErrTermsNotAccepted):
+		Error(w, http.StatusBadRequest, "terms_not_accepted", "You must accept the Terms of Service and Privacy Policy.")
 	case errors.Is(err, domain.ErrInvalidState):
 		Error(w, http.StatusBadRequest, "invalid_request", err.Error())
 	default:

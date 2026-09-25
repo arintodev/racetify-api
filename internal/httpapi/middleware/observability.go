@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/racetify/racetify-api/internal/httpapi/reqctx"
+	"github.com/racetify/racetify-api/internal/platform/originpolicy"
 	"github.com/racetify/racetify-api/internal/security"
 )
 
@@ -82,22 +83,24 @@ func Recover(logger *slog.Logger) func(http.Handler) http.Handler {
 // blanket '*', with the OAuth S2S endpoint (mounted separately as it takes
 // no browser cookies) allowed to accept requests from any registered
 // server-side caller.
-func CORS(allowedOrigins []string) func(http.Handler) http.Handler {
-	allowed := make(map[string]bool, len(allowedOrigins))
-	for _, o := range allowedOrigins {
-		allowed[o] = true
-	}
-
+//
+// Browsers call this API directly with credentials (cookies), so an allowed
+// origin is echoed back with Allow-Credentials. The policy may hold wildcard
+// entries (https://*.racetify.com) for tenant subdomains.
+func CORS(policy *originpolicy.Policy) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			origin := r.Header.Get("Origin")
-			if origin != "" && allowed[origin] {
+			w.Header().Add("Vary", "Origin")
+			if origin != "" && policy.Allowed(origin) {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Access-Control-Allow-Credentials", "true")
-				w.Header().Set("Vary", "Origin")
 			}
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID, X-Token-Delivery")
+			// Lets the browser reuse one preflight for a while instead of
+			// paying an extra round trip before every JSON POST.
+			w.Header().Set("Access-Control-Max-Age", "7200")
 
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)

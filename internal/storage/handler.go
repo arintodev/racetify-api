@@ -95,7 +95,7 @@ func (h *Handler) RequestUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond.JSON(w, http.StatusOK, UploadTicketDTO{
-		UploadURL: ticket.UploadURL, ExpiresAt: ticket.ExpiresAt, Bucket: ticket.Bucket, Key: ticket.Key,
+		ID: ticket.ObjectID, UploadURL: ticket.UploadURL, ExpiresAt: ticket.ExpiresAt, Bucket: ticket.Bucket, Key: ticket.Key,
 	})
 }
 

@@ -187,35 +187,43 @@ func (r *Repository) ActiveRole(ctx context.Context, tenantID, userID string) (r
 	return string(m.Role), m.Status == MemberStatusActive, nil
 }
 
-// ListMembers returns tenant_members newest-first, keyset-paginated by
-// (created_at, id) - see internal/platform/pagination's doc comment for why.
-func (r *Repository) ListMembers(ctx context.Context, tenantID string, page pagination.PageParams) (pagination.Page[TenantMember], error) {
+// ListActiveMembersWithUser returns a tenant's active members newest-first,
+// keyset-paginated by (created_at, id) - see internal/platform/pagination's
+// doc comment for why - joined to the person each belongs to. Removed
+// members are kept as rows for history but are not listed.
+func (r *Repository) ListActiveMembersWithUser(ctx context.Context, tenantID string, page pagination.PageParams) (pagination.Page[MemberWithUser], error) {
 	limit := page.NormalizeLimit()
-	query := `SELECT ` + membershipColumns + ` FROM tenant_members WHERE tenant_id = $1`
+	query := `
+		SELECT m.id, m.tenant_id, m.user_id, m.role, m.status, m.created_at, m.updated_at,
+		       u.email, u.first_name, u.last_name
+		FROM tenant_members m
+		JOIN users u ON u.id = m.user_id
+		WHERE m.tenant_id = $1 AND m.status = 'active'`
 	args := []any{tenantID}
 
 	if c, ok := pagination.DecodeCursor(page.Cursor); ok {
-		query += ` AND (created_at, id) < ($2, $3)`
+		query += ` AND (m.created_at, m.id) < ($2, $3)`
 		args = append(args, c.CreatedAt, c.ID)
 	}
-	query += ` ORDER BY created_at DESC, id DESC LIMIT ` + fmt.Sprint(limit+1)
+	query += ` ORDER BY m.created_at DESC, m.id DESC LIMIT ` + fmt.Sprint(limit+1)
 
 	rows, err := r.db.Q(ctx).QueryContext(ctx, query, args...)
 	if err != nil {
-		return pagination.Page[TenantMember]{}, err
+		return pagination.Page[MemberWithUser]{}, err
 	}
 	defer rows.Close()
 
-	var out []TenantMember
+	var out []MemberWithUser
 	for rows.Next() {
-		m, err := scanMembership(rows)
-		if err != nil {
-			return pagination.Page[TenantMember]{}, err
+		var m MemberWithUser
+		if err := rows.Scan(&m.ID, &m.TenantID, &m.UserID, &m.Role, &m.Status, &m.CreatedAt, &m.UpdatedAt,
+			&m.Email, &m.FirstName, &m.LastName); err != nil {
+			return pagination.Page[MemberWithUser]{}, err
 		}
-		out = append(out, *m)
+		out = append(out, m)
 	}
 	if err := rows.Err(); err != nil {
-		return pagination.Page[TenantMember]{}, err
+		return pagination.Page[MemberWithUser]{}, err
 	}
 
 	var next string
@@ -224,7 +232,60 @@ func (r *Repository) ListMembers(ctx context.Context, tenantID string, page pagi
 		next = pagination.EncodeCursor(last.CreatedAt, last.ID)
 		out = out[:limit]
 	}
-	return pagination.Page[TenantMember]{Items: out, NextCursor: next}, nil
+	return pagination.Page[MemberWithUser]{Items: out, NextCursor: next}, nil
+}
+
+// GetMemberByID looks a membership up by its own id within tenantID.
+func (r *Repository) GetMemberByID(ctx context.Context, tenantID, id string) (*TenantMember, error) {
+	row := r.db.Q(ctx).QueryRowContext(ctx, `
+		SELECT `+membershipColumns+` FROM tenant_members WHERE tenant_id = $1 AND id = $2`,
+		tenantID, id)
+	return scanMembership(row)
+}
+
+func (r *Repository) UpdateMemberRole(ctx context.Context, tenantID, id string, role MemberRole) error {
+	res, err := r.db.Q(ctx).ExecContext(ctx, `
+		UPDATE tenant_members SET role = $3 WHERE tenant_id = $1 AND id = $2 AND status = 'active'`,
+		tenantID, id, role)
+	if err != nil {
+		return err
+	}
+	return dbutil.CheckRowsAffected(res)
+}
+
+func (r *Repository) SetMemberStatus(ctx context.Context, tenantID, id string, status MemberStatus) error {
+	res, err := r.db.Q(ctx).ExecContext(ctx, `
+		UPDATE tenant_members SET status = $3 WHERE tenant_id = $1 AND id = $2`,
+		tenantID, id, status)
+	if err != nil {
+		return err
+	}
+	return dbutil.CheckRowsAffected(res)
+}
+
+// CreateOrReactivateMember adds a membership, or brings a previously
+// removed one back with the new role (tenant_members is unique per
+// (tenant, user), so a returning person keeps their row). An already-active
+// membership is left alone and reported as domain.ErrAlreadyExists. On
+// success m.ID is the id of the row that now represents the membership.
+func (r *Repository) CreateOrReactivateMember(ctx context.Context, m *TenantMember) error {
+	err := r.db.Q(ctx).QueryRowContext(ctx, `
+		INSERT INTO tenant_members (id, tenant_id, user_id, role, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (tenant_id, user_id) DO UPDATE
+		   SET role = EXCLUDED.role, status = EXCLUDED.status
+		 WHERE tenant_members.status = 'removed'
+		RETURNING id`,
+		m.ID, m.TenantID, m.UserID, m.Role, m.Status, m.CreatedAt, m.UpdatedAt,
+	).Scan(&m.ID)
+	if err != nil {
+		// No row returned: the conflicting membership is active.
+		if errors.Is(dbutil.MapNotFound(err), domain.ErrNotFound) {
+			return domain.ErrAlreadyExists
+		}
+		return err
+	}
+	return nil
 }
 
 func scanMembership(row dbutil.RowScanner) (*TenantMember, error) {
@@ -296,6 +357,25 @@ func (r *Repository) ListInvitations(ctx context.Context, tenantID string, page 
 		out = out[:limit]
 	}
 	return pagination.Page[Invitation]{Items: out, NextCursor: next}, nil
+}
+
+// GetInvitationByID looks an invitation up inside the tenant context.
+func (r *Repository) GetInvitationByID(ctx context.Context, tenantID, id string) (*Invitation, error) {
+	row := r.db.Q(ctx).QueryRowContext(ctx, `SELECT `+invitationColumns+` FROM invitations WHERE tenant_id = $1 AND id = $2`, tenantID, id)
+	return scanInvitation(row)
+}
+
+// RotateInvitationToken swaps a still-pending invitation's token hash and
+// expiry, invalidating the link that was sent before.
+func (r *Repository) RotateInvitationToken(ctx context.Context, tenantID, id, tokenHash string, expiresAt time.Time) error {
+	res, err := r.db.Q(ctx).ExecContext(ctx, `
+		UPDATE invitations SET token_hash = $3, expires_at = $4
+		WHERE tenant_id = $1 AND id = $2 AND status = 'pending'`,
+		tenantID, id, tokenHash, expiresAt)
+	if err != nil {
+		return err
+	}
+	return dbutil.CheckRowsAffected(res)
 }
 
 // GetInvitationByTokenHash looks up an invitation by the SHA-256 hash of

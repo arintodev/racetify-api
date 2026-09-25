@@ -133,7 +133,7 @@ func (s *Service) ListTenantsForUser(ctx context.Context, userID string) ([]Tena
 // actorRole is the acting user's role within tenantID, already resolved
 // and verified by middleware.RequireTenantForUser/RequireRole before the
 // handler ever calls this method.
-func (s *Service) InviteStaff(ctx context.Context, tenantID, actorUserID string, actorRole, targetRole MemberRole, email string) (*Invitation, string, error) {
+func (s *Service) InviteStaff(ctx context.Context, tenantID, actorUserID string, actorRole, targetRole MemberRole, email, linkOrigin string) (*Invitation, string, error) {
 	if !actorRole.IsAtLeast(RoleAdmin) {
 		return nil, "", domain.ErrForbidden
 	}
@@ -185,7 +185,7 @@ func (s *Service) InviteStaff(ctx context.Context, tenantID, actorUserID string,
 		return nil, "", err
 	}
 
-	_ = s.mailer.SendInvitationEmail(ctx, email, tenant.Name, inviter.DisplayName(), invitationLink(rawToken))
+	_ = s.mailer.SendInvitationEmail(ctx, email, tenant.Name, inviter.DisplayName(), invitationLink(linkOrigin, rawToken))
 	return inv, rawToken, nil
 }
 
@@ -256,7 +256,9 @@ func (s *Service) AcceptInvitation(ctx context.Context, rawToken, acceptingUserI
 			CreatedAt: now,
 			UpdatedAt: now,
 		}
-		if err := s.repo.CreateMember(ctx, member); err != nil {
+		// A person who was removed earlier and is invited again gets their
+		// old membership back rather than tripping the (tenant, user) unique key.
+		if err := s.repo.CreateOrReactivateMember(ctx, member); err != nil {
 			return err
 		}
 		return s.recordAudit(ctx, &inv.TenantID, &acceptingUserID, nil, audit.ActionInvitationAccepted, map[string]any{"invitation_id": inv.ID})
@@ -265,19 +267,6 @@ func (s *Service) AcceptInvitation(ctx context.Context, rawToken, acceptingUserI
 		return nil, err
 	}
 	return member, nil
-}
-
-// ListMembers returns one keyset-paginated page of tenantID's members -
-// see internal/platform/pagination for why keyset rather than
-// LIMIT/OFFSET.
-func (s *Service) ListMembers(ctx context.Context, tenantID string, page pagination.PageParams) (pagination.Page[TenantMember], error) {
-	var out pagination.Page[TenantMember]
-	err := s.db.WithTenantTx(ctx, tenantID, func(ctx context.Context) error {
-		var err error
-		out, err = s.repo.ListMembers(ctx, tenantID, page)
-		return err
-	})
-	return out, err
 }
 
 // TenantSummary is the payload behind GET /api/v1/tenant/summary - a
@@ -374,8 +363,4 @@ func (s *Service) recordAudit(ctx context.Context, tenantID, actorUserID, actorC
 		Metadata:      metadata,
 		CreatedAt:     time.Now().UTC(),
 	})
-}
-
-func invitationLink(token string) string {
-	return fmt.Sprintf("https://app.racetify.id/invitations/accept?token=%s", token)
 }

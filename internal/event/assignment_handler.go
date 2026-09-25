@@ -6,6 +6,7 @@ import (
 
 	"github.com/racetify/racetify-api/internal/httpapi/reqctx"
 	"github.com/racetify/racetify-api/internal/httpapi/respond"
+	"github.com/racetify/racetify-api/internal/platform/originpolicy"
 	"github.com/racetify/racetify-api/internal/platform/rbac"
 )
 
@@ -47,6 +48,7 @@ func (h *Handler) CreateAssignment(w http.ResponseWriter, r *http.Request) {
 	assignment, inv, rawToken, err := h.events.AssignToEvent(
 		r.Context(), tenantID, eventID, actorUserID, rbac.MemberRole(actorRoleStr),
 		req.Email, AssignmentLabel(req.Label), req.Capabilities, expiresAt,
+		h.origins.LinkOrigin(originpolicy.RequestOrigin(r)),
 	)
 	if err != nil {
 		respond.FromServiceError(w, err)

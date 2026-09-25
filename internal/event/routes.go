@@ -6,6 +6,7 @@ import (
 	"github.com/racetify/racetify-api/internal/httpapi/middleware"
 	"github.com/racetify/racetify-api/internal/httpapi/routing"
 	"github.com/racetify/racetify-api/internal/oauthclient"
+	"github.com/racetify/racetify-api/internal/platform/originpolicy"
 )
 
 // RegisterRoutes wires the tenant-scoped Event/Race CRUD endpoints and
@@ -13,8 +14,8 @@ import (
 // mw.RequireAdminRole/RequireAnyRole are built in router.go from
 // tenant.RequireRole(tenant.RoleAdmin/RoleStaff) - this package does not
 // import internal/tenant directly, matching §9's import-direction note.
-func RegisterRoutes(mux *http.ServeMux, mw routing.Middlewares, svc *Service) {
-	h := NewHandler(svc)
+func RegisterRoutes(mux *http.ServeMux, mw routing.Middlewares, svc *Service, origins *originpolicy.Policy) {
+	h := NewHandler(svc, origins)
 
 	// ---- user-session authenticated, tenant-scoped ----
 	mux.Handle("POST /api/v1/events", routing.Chain(h.Create, mw.RequireAdminRole, mw.RequireTenantForUser, mw.RequireUserAuth))

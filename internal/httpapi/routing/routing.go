@@ -23,6 +23,7 @@ type Middlewares struct {
 	RequireAnyRole       func(http.Handler) http.Handler
 	RequireSuperAdmin    func(http.Handler) http.Handler
 	LoginRateLimit       func(http.Handler) http.Handler
+	SignupRateLimit      func(http.Handler) http.Handler
 	TokenRateLimit       func(http.Handler) http.Handler
 }
 

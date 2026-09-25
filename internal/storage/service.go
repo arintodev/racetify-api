@@ -43,6 +43,9 @@ func NewService(
 
 // UploadTicket is what RequestUpload returns to the HTTP layer.
 type UploadTicket struct {
+	// ObjectID is the objects row the upload fills: what other resources
+	// (templates, photos) reference as storage_id.
+	ObjectID  string
 	UploadURL string
 	ExpiresAt time.Time
 	Bucket    string
@@ -60,6 +63,14 @@ func (s *Service) RequestUpload(ctx context.Context, tenantID, actorUserID strin
 	if !actorRole.IsAtLeast(rbac.RoleAdmin) {
 		return nil, domain.ErrForbidden
 	}
+	return s.ProvisionUpload(ctx, tenantID, actorUserID, bucketStr, key, contentType)
+}
+
+// ProvisionUpload is RequestUpload without the role check: the caller has
+// already authorised the actor by its own rules. The gallery uses it so a
+// photographer (a crew member holding gallery:upload, not a tenant admin)
+// can get upload URLs for photos.
+func (s *Service) ProvisionUpload(ctx context.Context, tenantID, actorUserID, bucketStr, key, contentType string) (*UploadTicket, error) {
 	bucket := objectstorage.Bucket(bucketStr)
 	if !bucket.Valid() {
 		return nil, fmt.Errorf("service: %w: bucket must be \"public\" or \"private\"", domain.ErrInvalidState)
@@ -92,7 +103,7 @@ func (s *Service) RequestUpload(ctx context.Context, tenantID, actorUserID strin
 	if err != nil {
 		return nil, err
 	}
-	return &UploadTicket{UploadURL: ticket.URL, ExpiresAt: ticket.ExpiresAt, Bucket: bucketStr, Key: key}, nil
+	return &UploadTicket{ObjectID: obj.ID, UploadURL: ticket.URL, ExpiresAt: ticket.ExpiresAt, Bucket: bucketStr, Key: key}, nil
 }
 
 // DownloadTicket is what RequestDownload returns. For the public bucket,
@@ -241,6 +252,50 @@ func (s *Service) CompleteUpload(ctx context.Context, tenantID, actorUserID stri
 		return 0, err
 	}
 	return size, nil
+}
+
+// ConfirmStored returns the object with the given id once its bytes are in
+// storage, without a role check (see ProvisionUpload). With the "local"
+// driver the PUT handler already marked it stored; with "r2" this server
+// never saw the PUT, so an object still pending is confirmed here with a
+// HEAD against the bucket. An object whose upload never happened comes back
+// still pending, and the caller decides what to do about it.
+func (s *Service) ConfirmStored(ctx context.Context, tenantID, actorUserID, objectID string) (*Object, error) {
+	var obj *Object
+	err := s.db.WithTenantTx(ctx, tenantID, func(ctx context.Context) error {
+		var err error
+		obj, err = s.objects.GetByID(ctx, tenantID, objectID)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	if obj.Status == ObjectStatusStored {
+		return obj, nil
+	}
+	direct, ok := s.store.(objectstorage.DirectDriver)
+	if !ok {
+		return obj, nil
+	}
+	size, err := direct.ConfirmUpload(objectstorage.Bucket(obj.Bucket), tenantID, obj.ObjectKey)
+	if err != nil {
+		if errors.Is(err, objectstorage.ErrNotFound) {
+			return obj, nil
+		}
+		return nil, err
+	}
+	err = s.db.WithTenantTx(ctx, tenantID, func(ctx context.Context) error {
+		if err := s.objects.MarkStoredTenantScoped(ctx, tenantID, obj.Bucket, obj.ObjectKey, nil, size, time.Now().UTC()); err != nil {
+			return err
+		}
+		return s.recordAudit(ctx, &tenantID, &actorUserID, nil, audit.ActionObjectStored,
+			map[string]any{"bucket": string(obj.Bucket), "key": obj.ObjectKey, "size_bytes": size})
+	})
+	if err != nil {
+		return nil, err
+	}
+	obj.Status, obj.SizeBytes = ObjectStatusStored, size
+	return obj, nil
 }
 
 // ResolveForGet is called by the unauthenticated GET object HTTP handler

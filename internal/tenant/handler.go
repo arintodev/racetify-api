@@ -6,14 +6,17 @@ import (
 
 	"github.com/racetify/racetify-api/internal/httpapi/reqctx"
 	"github.com/racetify/racetify-api/internal/httpapi/respond"
+	"github.com/racetify/racetify-api/internal/platform/originpolicy"
 )
 
 type Handler struct {
 	tenants *Service
+	// origins validates the frontend origin a link should point at.
+	origins *originpolicy.Policy
 }
 
-func NewHandler(tenants *Service) *Handler {
-	return &Handler{tenants: tenants}
+func NewHandler(tenants *Service, origins *originpolicy.Policy) *Handler {
+	return &Handler{tenants: tenants, origins: origins}
 }
 
 type createTenantRequest struct {
@@ -70,7 +73,7 @@ func (h *Handler) ListMembers(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]MemberDTO, 0, len(page.Items))
 	for i := range page.Items {
-		out = append(out, memberResponse(&page.Items[i]))
+		out = append(out, memberWithUserResponse(&page.Items[i]))
 	}
 	respond.JSON(w, http.StatusOK, respond.ListResponseDTO[MemberDTO]{Items: out, NextCursor: page.NextCursor})
 }
@@ -96,7 +99,8 @@ func (h *Handler) InviteStaff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	inv, rawToken, err := h.tenants.InviteStaff(r.Context(), tenantID, actorUserID, MemberRole(actorRoleStr), MemberRole(req.Role), req.Email)
+	inv, rawToken, err := h.tenants.InviteStaff(r.Context(), tenantID, actorUserID, MemberRole(actorRoleStr), MemberRole(req.Role), req.Email,
+		h.origins.LinkOrigin(originpolicy.RequestOrigin(r)))
 	if err != nil {
 		respond.FromServiceError(w, err)
 		return
@@ -222,4 +226,60 @@ func (h *Handler) Summary(w http.ResponseWriter, r *http.Request) {
 		TenantName:       summary.TenantName,
 		OAuthClientCount: summary.OAuthClientCount,
 	})
+}
+
+type updateMemberRequest struct {
+	Role string `json:"role"` // "admin" | "staff"
+}
+
+// UpdateMember handles PATCH /api/v1/members/{id}: change a member's role.
+func (h *Handler) UpdateMember(w http.ResponseWriter, r *http.Request) {
+	tenantID, _ := reqctx.TenantID(r.Context())
+	actorUserID, _ := reqctx.UserID(r.Context())
+	actorRoleStr, _ := reqctx.MemberRole(r.Context())
+
+	var req updateMemberRequest
+	if !respond.DecodeJSON(w, r, &req) {
+		return
+	}
+	if strings.TrimSpace(req.Role) == "" {
+		respond.Error(w, http.StatusBadRequest, "invalid_request", "role is required.")
+		return
+	}
+	member, err := h.tenants.UpdateMemberRole(r.Context(), tenantID, actorUserID, MemberRole(actorRoleStr), r.PathValue("id"), MemberRole(req.Role))
+	if err != nil {
+		respond.FromServiceError(w, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, memberResponse(member))
+}
+
+// RemoveMember handles DELETE /api/v1/members/{id}.
+func (h *Handler) RemoveMember(w http.ResponseWriter, r *http.Request) {
+	tenantID, _ := reqctx.TenantID(r.Context())
+	actorUserID, _ := reqctx.UserID(r.Context())
+	actorRoleStr, _ := reqctx.MemberRole(r.Context())
+
+	if err := h.tenants.RemoveMember(r.Context(), tenantID, actorUserID, MemberRole(actorRoleStr), r.PathValue("id")); err != nil {
+		respond.FromServiceError(w, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, map[string]bool{"removed": true})
+}
+
+// ResendInvitation handles POST /api/v1/invitations/{id}/resend: issues a
+// fresh link (the old one stops working) and returns the new token once,
+// like creating an invitation does.
+func (h *Handler) ResendInvitation(w http.ResponseWriter, r *http.Request) {
+	tenantID, _ := reqctx.TenantID(r.Context())
+	actorUserID, _ := reqctx.UserID(r.Context())
+	actorRoleStr, _ := reqctx.MemberRole(r.Context())
+
+	inv, rawToken, err := h.tenants.ResendInvitation(r.Context(), tenantID, actorUserID, MemberRole(actorRoleStr), r.PathValue("id"),
+		h.origins.LinkOrigin(originpolicy.RequestOrigin(r)))
+	if err != nil {
+		respond.FromServiceError(w, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, InvitationCreatedDTO{InvitationDTO: invitationResponse(inv), Token: rawToken})
 }

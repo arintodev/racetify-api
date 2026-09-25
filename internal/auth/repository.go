@@ -30,14 +30,14 @@ func NewRepository(db *database.DB) *Repository {
 
 // ==================== users ====================
 
-const userColumns = `id, email, password_hash, first_name, last_name, phone, is_email_verified, is_super_admin, status, created_at, updated_at`
+const userColumns = `id, email, password_hash, first_name, last_name, phone, is_email_verified, is_super_admin, status, terms_accepted_at, created_at, updated_at`
 
 func (r *Repository) CreateUser(ctx context.Context, u *User) error {
 	_, err := r.db.Q(ctx).ExecContext(ctx, `
-		INSERT INTO users (id, email, password_hash, first_name, last_name, phone, is_email_verified, is_super_admin, status, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		INSERT INTO users (id, email, password_hash, first_name, last_name, phone, is_email_verified, is_super_admin, status, terms_accepted_at, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 		u.ID, u.Email, u.PasswordHash, u.FirstName, u.LastName, u.Phone,
-		u.IsEmailVerified, u.IsSuperAdmin, u.Status, u.CreatedAt, u.UpdatedAt,
+		u.IsEmailVerified, u.IsSuperAdmin, u.Status, u.TermsAcceptedAt, u.CreatedAt, u.UpdatedAt,
 	)
 	if dbutil.IsUniqueViolation(err) {
 		return domain.ErrAlreadyExists
@@ -75,7 +75,7 @@ func scanUser(row dbutil.RowScanner) (*User, error) {
 	u := &User{}
 	err := row.Scan(
 		&u.ID, &u.Email, &u.PasswordHash, &u.FirstName, &u.LastName, &u.Phone,
-		&u.IsEmailVerified, &u.IsSuperAdmin, &u.Status, &u.CreatedAt, &u.UpdatedAt,
+		&u.IsEmailVerified, &u.IsSuperAdmin, &u.Status, &u.TermsAcceptedAt, &u.CreatedAt, &u.UpdatedAt,
 	)
 	if err != nil {
 		return nil, dbutil.MapNotFound(err)
@@ -87,20 +87,20 @@ func scanUser(row dbutil.RowScanner) (*User, error) {
 // by GetUserByProviderID's join, so scanUser's column order stays the
 // single source of truth instead of being duplicated here.
 func userTableColumns() string {
-	return "u.id, u.email, u.password_hash, u.first_name, u.last_name, u.phone, u.is_email_verified, u.is_super_admin, u.status, u.created_at, u.updated_at"
+	return "u.id, u.email, u.password_hash, u.first_name, u.last_name, u.phone, u.is_email_verified, u.is_super_admin, u.status, u.terms_accepted_at, u.created_at, u.updated_at"
 }
 
 // ==================== refresh_tokens ====================
 //
 // Global (not tenant-scoped): a Runner session is not tied to any tenant.
 
-const refreshTokenColumns = `id, user_id, token_hash, replaced_by_hash, user_agent, ip_address, expires_at, revoked_at, created_at`
+const refreshTokenColumns = `id, user_id, token_hash, replaced_by_hash, user_agent, ip_address, family_id, expires_at, absolute_expires_at, origin_host, revoked_at, created_at`
 
 func (r *Repository) CreateRefreshToken(ctx context.Context, t *RefreshToken) error {
 	_, err := r.db.Q(ctx).ExecContext(ctx, `
-		INSERT INTO refresh_tokens (id, user_id, token_hash, replaced_by_hash, user_agent, ip_address, expires_at, revoked_at, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		t.ID, t.UserID, t.TokenHash, t.ReplacedByHash, t.UserAgent, t.IPAddress, t.ExpiresAt, t.RevokedAt, t.CreatedAt,
+		INSERT INTO refresh_tokens (id, user_id, token_hash, replaced_by_hash, user_agent, ip_address, family_id, expires_at, absolute_expires_at, origin_host, revoked_at, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+		t.ID, t.UserID, t.TokenHash, t.ReplacedByHash, t.UserAgent, t.IPAddress, t.FamilyID, t.ExpiresAt, t.AbsoluteExpiresAt, t.OriginHost, t.RevokedAt, t.CreatedAt,
 	)
 	if dbutil.IsUniqueViolation(err) {
 		return domain.ErrAlreadyExists
@@ -131,6 +131,15 @@ func (r *Repository) RevokeAllRefreshTokensForUser(ctx context.Context, userID s
 	return err
 }
 
+// RevokeRefreshTokenFamily revokes every still-active token of one session
+// (login), leaving the same user's other sessions untouched.
+func (r *Repository) RevokeRefreshTokenFamily(ctx context.Context, familyID string, revokedAt time.Time) error {
+	_, err := r.db.Q(ctx).ExecContext(ctx, `
+		UPDATE refresh_tokens SET revoked_at = $2 WHERE family_id = $1 AND revoked_at IS NULL`,
+		familyID, revokedAt)
+	return err
+}
+
 func (r *Repository) RevokeRefreshToken(ctx context.Context, id string, revokedAt time.Time) error {
 	_, err := r.db.Q(ctx).ExecContext(ctx, `UPDATE refresh_tokens SET revoked_at = $2 WHERE id = $1`, id, revokedAt)
 	return err
@@ -138,7 +147,7 @@ func (r *Repository) RevokeRefreshToken(ctx context.Context, id string, revokedA
 
 func scanRefreshToken(row dbutil.RowScanner) (*RefreshToken, error) {
 	t := &RefreshToken{}
-	err := row.Scan(&t.ID, &t.UserID, &t.TokenHash, &t.ReplacedByHash, &t.UserAgent, &t.IPAddress, &t.ExpiresAt, &t.RevokedAt, &t.CreatedAt)
+	err := row.Scan(&t.ID, &t.UserID, &t.TokenHash, &t.ReplacedByHash, &t.UserAgent, &t.IPAddress, &t.FamilyID, &t.ExpiresAt, &t.AbsoluteExpiresAt, &t.OriginHost, &t.RevokedAt, &t.CreatedAt)
 	if err != nil {
 		return nil, dbutil.MapNotFound(err)
 	}

@@ -6,6 +6,7 @@ import (
 	"github.com/racetify/racetify-api/internal/httpapi/middleware"
 	"github.com/racetify/racetify-api/internal/httpapi/routing"
 	"github.com/racetify/racetify-api/internal/oauthclient"
+	"github.com/racetify/racetify-api/internal/platform/originpolicy"
 )
 
 // RegisterRoutes wires tenant creation/listing, invitation acceptance (all
@@ -14,8 +15,8 @@ import (
 // Super Admin verification endpoint, and (folded in per
 // docs/phase0-refactor-plan.md §6) the Phase 0 demo resource endpoint
 // reachable under both a user session and an M2M token.
-func RegisterRoutes(mux *http.ServeMux, mw routing.Middlewares, svc *Service) {
-	h := NewHandler(svc)
+func RegisterRoutes(mux *http.ServeMux, mw routing.Middlewares, svc *Service, origins *originpolicy.Policy) {
+	h := NewHandler(svc, origins)
 
 	// ---- user-session authenticated, no tenant context ----
 	mux.Handle("POST /api/v1/tenants", routing.Chain(h.Create, mw.RequireUserAuth))
@@ -24,6 +25,9 @@ func RegisterRoutes(mux *http.ServeMux, mw routing.Middlewares, svc *Service) {
 
 	// ---- user-session authenticated, tenant-scoped ----
 	mux.Handle("GET /api/v1/members", routing.Chain(h.ListMembers, mw.RequireAnyRole, mw.RequireTenantForUser, mw.RequireUserAuth))
+	mux.Handle("PATCH /api/v1/members/{id}", routing.Chain(h.UpdateMember, mw.RequireAdminRole, mw.RequireTenantForUser, mw.RequireUserAuth))
+	mux.Handle("DELETE /api/v1/members/{id}", routing.Chain(h.RemoveMember, mw.RequireAdminRole, mw.RequireTenantForUser, mw.RequireUserAuth))
+	mux.Handle("POST /api/v1/invitations/{id}/resend", routing.Chain(h.ResendInvitation, mw.RequireAdminRole, mw.RequireTenantForUser, mw.RequireUserAuth))
 	mux.Handle("POST /api/v1/invitations", routing.Chain(h.InviteStaff, mw.RequireAdminRole, mw.RequireTenantForUser, mw.RequireUserAuth))
 	mux.Handle("GET /api/v1/invitations", routing.Chain(h.ListInvitations, mw.RequireAdminRole, mw.RequireTenantForUser, mw.RequireUserAuth))
 	mux.Handle("DELETE /api/v1/invitations/{id}", routing.Chain(h.RevokeInvitation, mw.RequireAdminRole, mw.RequireTenantForUser, mw.RequireUserAuth))

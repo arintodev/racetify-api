@@ -110,6 +110,15 @@ func (r *Repository) GetByKey(ctx context.Context, tenantID string, bucket Objec
 	return scanObject(row)
 }
 
+// GetByID looks up a tenant's object by id from within an already-open
+// tenant-scoped transaction.
+func (r *Repository) GetByID(ctx context.Context, tenantID, id string) (*Object, error) {
+	row := r.db.Q(ctx).QueryRowContext(ctx, `
+		SELECT `+objectColumns+` FROM objects WHERE tenant_id = $1 AND id = $2`,
+		tenantID, id)
+	return scanObject(row)
+}
+
 // GetByKeyUnscoped is GetByKey's admin-connection counterpart, used by the
 // unauthenticated GET object endpoint to resolve content_type before
 // streaming decrypted bytes back - see the type doc comment for why this

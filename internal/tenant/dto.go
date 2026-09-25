@@ -29,14 +29,26 @@ func tenantWithRoleResponse(t TenantWithRole) TenantWithRoleDTO {
 
 type MemberDTO struct {
 	ID        string    `json:"id"`
+	TenantID  string    `json:"tenant_id"`
 	UserID    string    `json:"user_id"`
 	Role      string    `json:"role"`
 	Status    string    `json:"status"`
 	CreatedAt time.Time `json:"created_at"`
+	// Email and the names are present on the member list (which joins the
+	// person in); responses that only echo a membership omit them.
+	Email     string `json:"email,omitempty"`
+	FirstName string `json:"first_name,omitempty"`
+	LastName  string `json:"last_name,omitempty"`
 }
 
 func memberResponse(m *TenantMember) MemberDTO {
-	return MemberDTO{ID: m.ID, UserID: m.UserID, Role: string(m.Role), Status: string(m.Status), CreatedAt: m.CreatedAt}
+	return MemberDTO{ID: m.ID, TenantID: m.TenantID, UserID: m.UserID, Role: string(m.Role), Status: string(m.Status), CreatedAt: m.CreatedAt}
+}
+
+func memberWithUserResponse(m *MemberWithUser) MemberDTO {
+	dto := memberResponse(&m.TenantMember)
+	dto.Email, dto.FirstName, dto.LastName = m.Email, m.FirstName, m.LastName
+	return dto
 }
 
 type InvitationDTO struct {

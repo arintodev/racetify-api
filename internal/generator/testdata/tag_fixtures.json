@@ -1,0 +1,279 @@
+{
+ "bibTags": [
+  "BIB_NUMBER",
+  "BIB_NAME",
+  "FULL_NAME",
+  "FIRST_NAME",
+  "LAST_NAME",
+  "GENDER",
+  "BLOOD_TYPE",
+  "CLUB",
+  "LEG_ORDER",
+  "EMERGENCY_CONTACT_NAME",
+  "EMERGENCY_CONTACT_PHONE",
+  "TEAM_NAME",
+  "TEAM_GENDER",
+  "RACE_NAME",
+  "EVENT_NAME",
+  "QR_CODE_BIB"
+ ],
+ "tagCases": [
+  {
+   "ctx": {
+    "participant": {
+     "id": "p1",
+     "raceId": "r1",
+     "teamId": "T1",
+     "legOrder": 2,
+     "firstName": "Rizky",
+     "lastName": "Pratama",
+     "bibName": "RIZKY",
+     "bibNumber": 3001,
+     "gender": "male",
+     "email": "r@x.id",
+     "club": "Jogja Runners",
+     "emergencyContactName": "Sari",
+     "emergencyContactPhone": "0812-3456-7890",
+     "bloodType": "O+",
+     "status": "registered",
+     "gunTimeMs": null,
+     "netTimeMs": null,
+     "totalLaps": null,
+     "overallRank": null,
+     "categoryRank": null
+    },
+    "race": {
+     "name": "Relay 4×10K"
+    },
+    "team": {
+     "name": "Jogja Runners A",
+     "genderCategory": "mixed"
+    },
+    "eventName": "Jogja Marathon 2026"
+   },
+   "values": {
+    "BIB_NUMBER": "3001",
+    "BIB_NAME": "RIZKY",
+    "FULL_NAME": "Rizky Pratama",
+    "FIRST_NAME": "Rizky",
+    "LAST_NAME": "Pratama",
+    "GENDER": "Laki-laki",
+    "BLOOD_TYPE": "O+",
+    "CLUB": "Jogja Runners",
+    "LEG_ORDER": "2",
+    "EMERGENCY_CONTACT_NAME": "Sari",
+    "EMERGENCY_CONTACT_PHONE": "0812-3456-7890",
+    "TEAM_NAME": "Jogja Runners A",
+    "TEAM_GENDER": "Campuran",
+    "RACE_NAME": "Relay 4×10K",
+    "EVENT_NAME": "Jogja Marathon 2026",
+    "QR_CODE_BIB": "3001"
+   }
+  },
+  {
+   "ctx": {
+    "participant": {
+     "id": "p2",
+     "raceId": "r1",
+     "teamId": null,
+     "legOrder": null,
+     "firstName": "Rizky",
+     "lastName": null,
+     "bibName": null,
+     "bibNumber": 7,
+     "gender": "female",
+     "email": "r@x.id",
+     "club": null,
+     "emergencyContactName": null,
+     "emergencyContactPhone": null,
+     "bloodType": null,
+     "status": "registered",
+     "gunTimeMs": null,
+     "netTimeMs": null,
+     "totalLaps": null,
+     "overallRank": null,
+     "categoryRank": null
+    },
+    "race": null,
+    "team": null,
+    "eventName": ""
+   },
+   "values": {
+    "BIB_NUMBER": "7",
+    "BIB_NAME": "",
+    "FULL_NAME": "Rizky",
+    "FIRST_NAME": "Rizky",
+    "LAST_NAME": "",
+    "GENDER": "Perempuan",
+    "BLOOD_TYPE": "",
+    "CLUB": "",
+    "LEG_ORDER": "",
+    "EMERGENCY_CONTACT_NAME": "",
+    "EMERGENCY_CONTACT_PHONE": "",
+    "TEAM_NAME": "",
+    "TEAM_GENDER": "",
+    "RACE_NAME": "",
+    "EVENT_NAME": "",
+    "QR_CODE_BIB": "7"
+   }
+  },
+  {
+   "ctx": {
+    "participant": {
+     "id": "p3",
+     "raceId": "r1",
+     "teamId": "T1",
+     "legOrder": 2,
+     "firstName": "Ni Luh",
+     "lastName": "Ayu Kusuma Dewi",
+     "bibName": "RIZKY",
+     "bibNumber": 12345,
+     "gender": "female",
+     "email": "r@x.id",
+     "club": "Jogja Runners",
+     "emergencyContactName": "Sari",
+     "emergencyContactPhone": "0812-3456-7890",
+     "bloodType": "O+",
+     "status": "registered",
+     "gunTimeMs": null,
+     "netTimeMs": null,
+     "totalLaps": null,
+     "overallRank": null,
+     "categoryRank": null
+    },
+    "race": {
+     "name": "Relay 4×10K"
+    },
+    "team": {
+     "name": "Tim Putri",
+     "genderCategory": "female"
+    },
+    "eventName": "Bali 10K"
+   },
+   "values": {
+    "BIB_NUMBER": "12345",
+    "BIB_NAME": "RIZKY",
+    "FULL_NAME": "Ni Luh Ayu Kusuma Dewi",
+    "FIRST_NAME": "Ni Luh",
+    "LAST_NAME": "Ayu Kusuma Dewi",
+    "GENDER": "Perempuan",
+    "BLOOD_TYPE": "O+",
+    "CLUB": "Jogja Runners",
+    "LEG_ORDER": "2",
+    "EMERGENCY_CONTACT_NAME": "Sari",
+    "EMERGENCY_CONTACT_PHONE": "0812-3456-7890",
+    "TEAM_NAME": "Tim Putri",
+    "TEAM_GENDER": "Putri",
+    "RACE_NAME": "Relay 4×10K",
+    "EVENT_NAME": "Bali 10K",
+    "QR_CODE_BIB": "12345"
+   }
+  },
+  {
+   "ctx": {
+    "participant": {
+     "id": "p4",
+     "raceId": "r1",
+     "teamId": "T1",
+     "legOrder": 2,
+     "firstName": "Rizky",
+     "lastName": "Pratama",
+     "bibName": "RIZKY",
+     "bibNumber": 3001,
+     "gender": "male",
+     "email": "r@x.id",
+     "club": "Jogja Runners",
+     "emergencyContactName": "Sari",
+     "emergencyContactPhone": "0812-3456-7890",
+     "bloodType": "O+",
+     "status": "registered",
+     "gunTimeMs": null,
+     "netTimeMs": null,
+     "totalLaps": null,
+     "overallRank": null,
+     "categoryRank": null
+    },
+    "race": {
+     "name": "Relay 4×10K"
+    },
+    "team": {
+     "name": "Jogja Runners A",
+     "genderCategory": "male"
+    },
+    "eventName": "X"
+   },
+   "values": {
+    "BIB_NUMBER": "3001",
+    "BIB_NAME": "RIZKY",
+    "FULL_NAME": "Rizky Pratama",
+    "FIRST_NAME": "Rizky",
+    "LAST_NAME": "Pratama",
+    "GENDER": "Laki-laki",
+    "BLOOD_TYPE": "O+",
+    "CLUB": "Jogja Runners",
+    "LEG_ORDER": "2",
+    "EMERGENCY_CONTACT_NAME": "Sari",
+    "EMERGENCY_CONTACT_PHONE": "0812-3456-7890",
+    "TEAM_NAME": "Jogja Runners A",
+    "TEAM_GENDER": "Putra",
+    "RACE_NAME": "Relay 4×10K",
+    "EVENT_NAME": "X",
+    "QR_CODE_BIB": "3001"
+   }
+  }
+ ],
+ "fillCases": [
+  {
+   "text": "{{BIB_NUMBER}}",
+   "out": "3001"
+  },
+  {
+   "text": "Halo {{ full_name }} dari {{CLUB}}!",
+   "out": "Halo Rizky Pratama dari Jogja Runners!"
+  },
+  {
+   "text": "{{UNKNOWN}} tetap {{BIB_NAME}}",
+   "out": "{{UNKNOWN}} tetap RIZKY"
+  },
+  {
+   "text": "tanpa tag",
+   "out": "tanpa tag"
+  },
+  {
+   "text": "{{TEAM_NAME}}-{{LEG_ORDER}}",
+   "out": "Jogja Runners A-2"
+  }
+ ],
+ "fillCtx": {
+  "participant": {
+   "id": "p1",
+   "raceId": "r1",
+   "teamId": "T1",
+   "legOrder": 2,
+   "firstName": "Rizky",
+   "lastName": "Pratama",
+   "bibName": "RIZKY",
+   "bibNumber": 3001,
+   "gender": "male",
+   "email": "r@x.id",
+   "club": "Jogja Runners",
+   "emergencyContactName": "Sari",
+   "emergencyContactPhone": "0812-3456-7890",
+   "bloodType": "O+",
+   "status": "registered",
+   "gunTimeMs": null,
+   "netTimeMs": null,
+   "totalLaps": null,
+   "overallRank": null,
+   "categoryRank": null
+  },
+  "race": {
+   "name": "Relay 4×10K"
+  },
+  "team": {
+   "name": "Jogja Runners A",
+   "genderCategory": "mixed"
+  },
+  "eventName": "Jogja Marathon 2026"
+ }
+}

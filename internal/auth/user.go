@@ -43,6 +43,7 @@ type User struct {
 	IsEmailVerified bool
 	IsSuperAdmin    bool
 	Status          UserStatus
+	TermsAcceptedAt *time.Time
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }

@@ -29,6 +29,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -209,7 +210,7 @@ func registerAndLogin(t *testing.T, c *client, email, name string) {
 	if status != http.StatusOK {
 		t.Fatalf("login %s: status %d: %+v", email, status, resp)
 	}
-	c.access = resp.field(t, "access_token")
+	c.access = c.accessFromCookie(t)
 }
 
 // switchTenant calls POST /api/v1/auth/switch-tenant and, on success,
@@ -226,7 +227,7 @@ func (c *client) switchTenant(t *testing.T, tenantID string) (int, apiResponse) 
 	t.Helper()
 	status, resp := c.do(t, http.MethodPost, "/api/v1/auth/switch-tenant", nil, map[string]string{"tenant_id": tenantID})
 	if status == http.StatusOK {
-		c.access = resp.field(t, "access_token")
+		c.access = c.accessFromCookie(t)
 	}
 	return status, resp
 }
@@ -243,7 +244,7 @@ func (c *client) refresh(t *testing.T) (int, apiResponse) {
 	t.Helper()
 	status, resp := c.do(t, http.MethodPost, "/api/v1/auth/refresh", nil, nil)
 	if status == http.StatusOK {
-		c.access = resp.field(t, "access_token")
+		c.access = c.accessFromCookie(t)
 	}
 	return status, resp
 }
@@ -405,4 +406,28 @@ func TestFullPhase0Flow(t *testing.T) {
 	if status != http.StatusUnauthorized {
 		t.Fatalf("client_credentials grant with wrong secret: status=%d, want 401", status)
 	}
+}
+
+// accessFromCookie reads the browser-style access token the API just set in
+// the client's cookie jar. Browser sessions never put a token in a body.
+func (c *client) accessFromCookie(t *testing.T) string {
+	t.Helper()
+	u, err := url.Parse(c.base + "/api/v1/")
+	if err != nil {
+		t.Fatalf("parse base url: %v", err)
+	}
+	if v := cookieValue(c.http.Jar.Cookies(u), "racetify_access"); v != "" {
+		return v
+	}
+	t.Fatalf("no racetify_access cookie in the jar")
+	return ""
+}
+
+func cookieValue(cookies []*http.Cookie, name string) string {
+	for _, ck := range cookies {
+		if ck.Name == name {
+			return ck.Value
+		}
+	}
+	return ""
 }

@@ -13,9 +13,18 @@ type RefreshToken struct {
 	ReplacedByHash *string // set on rotation, enables reuse detection
 	UserAgent      *string
 	IPAddress      *string
-	ExpiresAt      time.Time
-	RevokedAt      *time.Time
-	CreatedAt      time.Time
+	// FamilyID groups every token descended from one login: rotation keeps
+	// it, so a whole session (one host/device) can be revoked as a unit
+	// without touching the same user's other sessions.
+	FamilyID string
+	// ExpiresAt is the idle expiry (re-derived on every rotation);
+	// AbsoluteExpiresAt is the hard cap fixed at login that ExpiresAt can
+	// never exceed.
+	ExpiresAt         time.Time
+	AbsoluteExpiresAt time.Time
+	OriginHost        *string
+	RevokedAt         *time.Time
+	CreatedAt         time.Time
 }
 
 func (t *RefreshToken) IsActive(now time.Time) bool {

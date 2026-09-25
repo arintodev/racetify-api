@@ -12,10 +12,14 @@ package mailer
 import (
 	"context"
 	"log/slog"
+	"time"
 )
 
 type Mailer interface {
 	SendVerificationEmail(ctx context.Context, toEmail, toName, verifyLink string) error
+	// SendSignupOTP delivers the 6-digit code that proves ownership of an
+	// email address at the start of self-registration.
+	SendSignupOTP(ctx context.Context, toEmail, code string, ttl time.Duration) error
 	SendPasswordResetEmail(ctx context.Context, toEmail, toName, resetLink string) error
 	SendInvitationEmail(ctx context.Context, toEmail, tenantName, inviterName, acceptLink string) error
 	// SendEventInvitationEmail is the event-scoped crew/volunteer
@@ -37,6 +41,15 @@ func NewLogMailer(logger *slog.Logger) *LogMailer {
 func (m *LogMailer) SendVerificationEmail(ctx context.Context, toEmail, toName, verifyLink string) error {
 	m.logger.InfoContext(ctx, "mailer: verification email",
 		"to", toEmail, "name", toName, "link", verifyLink)
+	return nil
+}
+
+// SendSignupOTP logs the code because this mailer is the development
+// stand-in for a real provider: it is the only way to read the code
+// locally. A real Mailer implementation must never log it.
+func (m *LogMailer) SendSignupOTP(ctx context.Context, toEmail, code string, ttl time.Duration) error {
+	m.logger.InfoContext(ctx, "mailer: signup verification code (dev only)",
+		"to", toEmail, "code", code, "expires_in", ttl.String())
 	return nil
 }
 

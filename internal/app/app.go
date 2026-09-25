@@ -15,10 +15,13 @@ import (
 	"github.com/racetify/racetify-api/internal/auth"
 	"github.com/racetify/racetify-api/internal/config"
 	"github.com/racetify/racetify-api/internal/event"
+	"github.com/racetify/racetify-api/internal/gallery"
+	"github.com/racetify/racetify-api/internal/generator"
 	"github.com/racetify/racetify-api/internal/httpapi"
 	"github.com/racetify/racetify-api/internal/jobqueue"
 	"github.com/racetify/racetify-api/internal/mailer"
 	"github.com/racetify/racetify-api/internal/oauthclient"
+	"github.com/racetify/racetify-api/internal/participant"
 	"github.com/racetify/racetify-api/internal/platform/database"
 	"github.com/racetify/racetify-api/internal/platform/objectstorage"
 	"github.com/racetify/racetify-api/internal/platform/ratelimit"
@@ -116,6 +119,10 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 	tenantService := tenant.NewService(appDB, tenants, authRepo, auditRepo, mail, cfg.Auth)
 	oauthClientService := oauthclient.NewService(appDB, oauthClients, auditRepo, tokens, limiter, cfg.Auth)
 	storageService := storage.NewService(appDB, objects, auditRepo, objectStore, cfg.Storage)
+	participants := participant.NewRepository(appDB)
+	participantService := participant.NewService(appDB, participants, auditRepo)
+	templateService := generator.NewService(appDB, generator.NewRepository(appDB), auditRepo, objectStore, cfg.Storage)
+	galleryService := gallery.NewService(appDB, gallery.NewRepository(appDB), auditRepo, storageService, objectStore, cfg.Storage)
 	eventService := event.NewService(appDB, events, auditRepo, authRepo, mail, cfg.Auth, tenants)
 	jobQueue := jobqueue.NewQueue(appDB, jobs, redisClient)
 
@@ -124,22 +131,25 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 		AdminDB: adminDB,
 		Redis:   redisClient,
 		Handler: httpapi.Deps{
-			Config:      cfg,
-			Logger:      log,
-			DB:          appDB,
-			AdminDB:     adminDB,
-			Redis:       redisClient,
-			Tokens:      tokens,
-			Memberships: tenants,
-			Auth:        authService,
-			Google:      googleService,
-			Tenants:     tenantService,
-			OAuthClient: oauthClientService,
-			RateLimiter: limiter,
-			Storage:     storageService,
-			ObjectStore: objectStore,
-			Events:      eventService,
-			JobQueue:    jobQueue,
+			Config:       cfg,
+			Logger:       log,
+			DB:           appDB,
+			AdminDB:      adminDB,
+			Redis:        redisClient,
+			Tokens:       tokens,
+			Memberships:  tenants,
+			Auth:         authService,
+			Google:       googleService,
+			Tenants:      tenantService,
+			OAuthClient:  oauthClientService,
+			RateLimiter:  limiter,
+			Storage:      storageService,
+			ObjectStore:  objectStore,
+			Events:       eventService,
+			Participants: participantService,
+			Templates:    templateService,
+			Gallery:      galleryService,
+			JobQueue:     jobQueue,
 		},
 	}, nil
 }

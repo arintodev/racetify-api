@@ -2,7 +2,9 @@ package auth
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/racetify/racetify-api/internal/audit"
 	"github.com/racetify/racetify-api/internal/config"
 	"github.com/racetify/racetify-api/internal/domain"
 	"github.com/racetify/racetify-api/internal/platform/rediscli"
@@ -52,12 +53,24 @@ func (g *GoogleService) Enabled() bool {
 // BeginAuthorization returns the URL the browser should be redirected to,
 // and stores a one-time CSRF state nonce in Redis (5 minute TTL) that
 // CompleteAuthorization must see again before it will exchange a code.
-func (g *GoogleService) BeginAuthorization(ctx context.Context) (redirectURL string, err error) {
+//
+// returnTo is the (already validated) frontend URL the callback should send
+// the browser back to; it is stored with the state so it cannot be tampered
+// with in transit.
+//
+// browserNonce is a secret the caller also hands the browser in a cookie: the
+// callback must present it back, which ties the whole attempt to the browser
+// that started it. Only its hash is stored.
+func (g *GoogleService) BeginAuthorization(ctx context.Context, returnTo, browserNonce string) (redirectURL string, err error) {
 	state, err := security.GenerateOpaqueToken(24)
 	if err != nil {
 		return "", err
 	}
-	if err := g.redis.Set(ctx, "oauth:google:state:"+state, "1", 5*time.Minute); err != nil {
+	stored, err := json.Marshal(googleState{NonceHash: security.HashToken(browserNonce), ReturnTo: returnTo})
+	if err != nil {
+		return "", err
+	}
+	if err := g.redis.Set(ctx, "oauth:google:state:"+state, string(stored), 5*time.Minute); err != nil {
 		return "", fmt.Errorf("service: store oauth state: %w", err)
 	}
 
@@ -71,6 +84,12 @@ func (g *GoogleService) BeginAuthorization(ctx context.Context) (redirectURL str
 		"prompt":        {"select_account"},
 	}
 	return "https://accounts.google.com/o/oauth2/v2/auth?" + q.Encode(), nil
+}
+
+// googleState is what the OAuth state key stands for.
+type googleState struct {
+	NonceHash string `json:"n"`
+	ReturnTo  string `json:"r"`
 }
 
 // GoogleUserInfo is the subset of Google's userinfo response this service
@@ -88,22 +107,31 @@ type GoogleUserInfo struct {
 
 // CompleteAuthorization validates the CSRF state, exchanges the
 // authorization code for tokens, and fetches the user's profile.
-func (g *GoogleService) CompleteAuthorization(ctx context.Context, code, state string) (*GoogleUserInfo, error) {
+func (g *GoogleService) CompleteAuthorization(ctx context.Context, code, state, browserNonce string) (info *GoogleUserInfo, returnTo string, err error) {
 	stateKey := "oauth:google:state:" + state
-	ok, err := g.redis.Exists(ctx, stateKey)
+	raw, err := g.redis.Get(ctx, stateKey)
 	if err != nil {
-		return nil, fmt.Errorf("service: check oauth state: %w", err)
-	}
-	if !ok {
-		return nil, fmt.Errorf("service: %w: unknown or expired oauth state", domain.ErrInvalidCredentials)
+		if errors.Is(err, rediscli.ErrNil) {
+			return nil, "", fmt.Errorf("service: %w: unknown or expired oauth state", domain.ErrInvalidCredentials)
+		}
+		return nil, "", fmt.Errorf("service: check oauth state: %w", err)
 	}
 	_ = g.redis.Del(ctx, stateKey) // single use
+	var stored googleState
+	if err := json.Unmarshal([]byte(raw), &stored); err != nil {
+		return nil, "", fmt.Errorf("service: %w: unreadable oauth state", domain.ErrInvalidCredentials)
+	}
+	returnTo = stored.ReturnTo
+	if browserNonce == "" || subtle.ConstantTimeCompare([]byte(security.HashToken(browserNonce)), []byte(stored.NonceHash)) != 1 {
+		return nil, returnTo, fmt.Errorf("service: %w: oauth attempt not started by this browser", domain.ErrInvalidCredentials)
+	}
 
 	accessToken, err := g.exchangeCode(ctx, code)
 	if err != nil {
-		return nil, err
+		return nil, returnTo, err
 	}
-	return g.fetchUserInfo(ctx, accessToken)
+	info, err = g.fetchUserInfo(ctx, accessToken)
+	return info, returnTo, err
 }
 
 func (g *GoogleService) exchangeCode(ctx context.Context, code string) (string, error) {
@@ -170,97 +198,6 @@ func (g *GoogleService) fetchUserInfo(ctx context.Context, accessToken string) (
 		return nil, fmt.Errorf("service: incomplete google userinfo response")
 	}
 	return &info, nil
-}
-
-// LoginOrRegisterWithGoogle finds-or-creates a User for a verified Google
-// identity and issues a session, exactly like Service.Login does for
-// email/password. It is a method on Service (not GoogleService) because it
-// needs the user/session repository; GoogleService only talks to Google.
-func (s *Service) LoginOrRegisterWithGoogle(ctx context.Context, info *GoogleUserInfo, userAgent, ip string) (*User, *SessionTokens, error) {
-	email := normalizeEmail(info.Email)
-
-	var user *User
-	err := s.db.WithTx(ctx, func(ctx context.Context) error {
-		byGoogle, err := s.repo.GetUserByProviderID(ctx, SocialProviderGoogle, info.Sub)
-		if err == nil {
-			user = byGoogle
-			return nil
-		}
-		if err != domain.ErrNotFound {
-			return err
-		}
-
-		byEmail, err := s.repo.GetUserByEmail(ctx, email)
-		if err == nil {
-			// Existing email/password account signing in with Google for
-			// the first time: link the identities rather than creating a
-			// duplicate account, since Racetify's "Single Runner Identity"
-			// principle is keyed on email.
-			if linkErr := s.repo.CreateSocialAccount(ctx, &SocialAccount{
-				ID:             security.MustNewUUIDv4(),
-				UserID:         byEmail.ID,
-				Provider:       SocialProviderGoogle,
-				ProviderUserID: info.Sub,
-				CreatedAt:      time.Now().UTC(),
-			}); linkErr != nil {
-				return linkErr
-			}
-			user = byEmail
-			return nil
-		}
-		if err != domain.ErrNotFound {
-			return err
-		}
-
-		firstName, lastName := info.GivenName, info.FamilyName
-		if firstName == "" && lastName == "" {
-			firstName, lastName = splitFullName(info.Name)
-		}
-
-		now := time.Now().UTC()
-		newUser := &User{
-			ID:              security.MustNewUUIDv4(),
-			Email:           email,
-			FirstName:       firstName,
-			LastName:        lastName,
-			IsEmailVerified: info.EmailVerified,
-			Status:          UserStatusActive,
-			CreatedAt:       now,
-			UpdatedAt:       now,
-		}
-		if err := s.repo.CreateUser(ctx, newUser); err != nil {
-			return err
-		}
-		if err := s.repo.CreateSocialAccount(ctx, &SocialAccount{
-			ID:             security.MustNewUUIDv4(),
-			UserID:         newUser.ID,
-			Provider:       SocialProviderGoogle,
-			ProviderUserID: info.Sub,
-			CreatedAt:      now,
-		}); err != nil {
-			return err
-		}
-		user = newUser
-		return s.recordAudit(ctx, nil, &user.ID, nil, audit.ActionUserRegistered, map[string]any{"via": "google"})
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-
-	if user.Status != UserStatusActive {
-		return nil, nil, domain.ErrAccountSuspended
-	}
-
-	// Google sign-in always yields a tenant-less access token for now,
-	// same baseline as Login without tenant_id - the caller follows up
-	// with POST /auth/switch-tenant. Wiring an optional tenant_id through
-	// the OAuth callback's `state` would be a natural follow-up if the
-	// frontend ever needs "sign in with Google directly into tenant X".
-	tokens, err := s.issueSession(ctx, user, userAgent, ip)
-	if err != nil {
-		return nil, nil, err
-	}
-	return user, tokens, nil
 }
 
 // splitFullName is the fallback used only when Google's userinfo response

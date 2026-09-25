@@ -83,6 +83,16 @@ func (s *Service) verifyTenantMembership(ctx context.Context, tenantID, userID s
 	return nil
 }
 
+// ClientInfo describes the caller a session is created or refreshed for. It
+// is recorded on the refresh token purely for the user's own "active
+// sessions" visibility; it carries no authority. OriginHost is the frontend
+// host (a BFF forwards it) the session belongs to.
+type ClientInfo struct {
+	UserAgent  string
+	IP         string
+	OriginHost string
+}
+
 // SessionTokens is what every login-shaped operation (Register does not
 // auto-login, Login, RefreshAccessToken, and Google sign-in all) returns
 // to the HTTP layer.
@@ -186,7 +196,7 @@ func (s *Service) VerifyEmail(ctx context.Context, rawToken string) error {
 // token being refreshed, Login has no such prior token to draw on. The
 // expected flow is Login -> GET /api/v1/tenants/me -> POST
 // /auth/switch-tenant (Service.SelectTenant).
-func (s *Service) Login(ctx context.Context, email, password, userAgent, ip string) (*User, *SessionTokens, error) {
+func (s *Service) Login(ctx context.Context, email, password string, client ClientInfo) (*User, *SessionTokens, error) {
 	email = normalizeEmail(email)
 
 	var user *User
@@ -210,13 +220,13 @@ func (s *Service) Login(ctx context.Context, email, password, userAgent, ip stri
 		if user.Status != UserStatusActive {
 			return domain.ErrAccountSuspended
 		}
-		return s.recordAudit(ctx, nil, &user.ID, nil, audit.ActionUserLoggedIn, map[string]any{"ip": ip})
+		return s.recordAudit(ctx, nil, &user.ID, nil, audit.ActionUserLoggedIn, map[string]any{"ip": client.IP})
 	})
 	if err != nil {
 		return nil, nil, err
 	}
 
-	tokens, err := s.issueSession(ctx, user, userAgent, ip)
+	tokens, err := s.issueSession(ctx, user, client)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -250,10 +260,11 @@ func (s *Service) Login(ctx context.Context, email, password, userAgent, ip stri
 // the old token was issued), so RefreshAccessToken silently falls back to
 // a tenant-less token instead of blocking a refresh the caller didn't
 // explicitly ask to be tenant-scoped in the first place.
-func (s *Service) RefreshAccessToken(ctx context.Context, rawRefreshToken, previousAccessToken, userAgent, ip string) (*User, *SessionTokens, error) {
+func (s *Service) RefreshAccessToken(ctx context.Context, rawRefreshToken, previousAccessToken string, client ClientInfo) (*User, *SessionTokens, error) {
 	var user *User
 	var newRawRefresh string
 	var newRefreshExpiresAt time.Time
+	reuseDetected := false
 
 	err := s.db.WithTx(ctx, func(ctx context.Context) error {
 		existing, err := s.repo.GetRefreshTokenByTokenHash(ctx, security.HashToken(rawRefreshToken))
@@ -264,12 +275,26 @@ func (s *Service) RefreshAccessToken(ctx context.Context, rawRefreshToken, previ
 			return err
 		}
 
+		now := time.Now().UTC()
+		withinGrace := false
 		if existing.RevokedAt != nil {
-			// Reuse of an already-rotated/revoked token: possible theft.
-			_ = s.repo.RevokeAllRefreshTokensForUser(ctx, existing.UserID, time.Now().UTC())
-			return domain.ErrInvalidCredentials
+			// A token rotated a moment ago is still honoured (once per
+			// request, as a sibling in the same session): a BFF may have
+			// several requests in flight carrying the same cookie, and
+			// only one of them can win the rotation. Anything else that
+			// is revoked - a logout, or a rotation older than the grace
+			// window - is reuse of a dead token: possible theft, so the
+			// whole session (family) is revoked. That revoke must commit,
+			// so it is done here and the error is returned after the
+			// transaction, not from inside it (which would roll it back).
+			withinGrace = existing.ReplacedByHash != nil && now.Sub(*existing.RevokedAt) <= s.cfg.RefreshGraceWindow
+			if !withinGrace {
+				_ = s.repo.RevokeRefreshTokenFamily(ctx, existing.FamilyID, now)
+				reuseDetected = true
+				return nil
+			}
 		}
-		if time.Now().After(existing.ExpiresAt) {
+		if now.After(existing.ExpiresAt) || now.After(existing.AbsoluteExpiresAt) {
 			return domain.ErrTokenExpired
 		}
 
@@ -281,32 +306,28 @@ func (s *Service) RefreshAccessToken(ctx context.Context, rawRefreshToken, previ
 			return domain.ErrAccountSuspended
 		}
 
-		newRaw, newHash, newExpiresAt, err := s.newRefreshToken()
+		newRaw, record, err := s.newRefreshTokenRecord(user.ID, existing.FamilyID, existing.AbsoluteExpiresAt, client)
 		if err != nil {
 			return err
 		}
-		newRecord := &RefreshToken{
-			ID:        security.MustNewUUIDv4(),
-			UserID:    user.ID,
-			TokenHash: newHash,
-			UserAgent: ptrOrNil(userAgent),
-			IPAddress: ptrOrNil(ip),
-			ExpiresAt: newExpiresAt,
-			CreatedAt: time.Now().UTC(),
-		}
-		if err := s.repo.CreateRefreshToken(ctx, newRecord); err != nil {
+		if err := s.repo.CreateRefreshToken(ctx, record); err != nil {
 			return err
 		}
-		if err := s.repo.RotateRefreshToken(ctx, existing.ID, newHash, time.Now().UTC()); err != nil {
-			return err
+		if !withinGrace {
+			if err := s.repo.RotateRefreshToken(ctx, existing.ID, record.TokenHash, now); err != nil {
+				return err
+			}
 		}
 
 		newRawRefresh = newRaw
-		newRefreshExpiresAt = newExpiresAt
+		newRefreshExpiresAt = record.ExpiresAt
 		return nil
 	})
 	if err != nil {
 		return nil, nil, err
+	}
+	if reuseDetected {
+		return nil, nil, domain.ErrInvalidCredentials
 	}
 
 	// Deliberately outside the rotation transaction above (and using its
@@ -393,8 +414,11 @@ func (s *Service) SelectTenant(ctx context.Context, userID string, isSuperAdmin 
 // the user explicitly signs out.
 func (s *Service) Logout(ctx context.Context, rawRefreshToken string, accessJTI string, accessExpiresAt time.Time, userID string) error {
 	if rawRefreshToken != "" {
-		if existing, err := s.repo.GetRefreshTokenByTokenHash(ctx, security.HashToken(rawRefreshToken)); err == nil {
-			_ = s.repo.RevokeRefreshToken(ctx, existing.ID, time.Now().UTC())
+		// The whole session (family) ends, not just the presented token -
+		// but only this session: the user's sessions on other hosts or
+		// devices are separate families and stay signed in.
+		if existing, err := s.repo.GetRefreshTokenByTokenHash(ctx, security.HashToken(rawRefreshToken)); err == nil && existing.UserID == userID {
+			_ = s.repo.RevokeRefreshTokenFamily(ctx, existing.FamilyID, time.Now().UTC())
 		}
 	}
 	if accessJTI != "" {
@@ -432,25 +456,18 @@ func blacklistKey(jti string) string { return "auth:blacklist:" + jti }
 // already-authenticated user (used by Login and by the Google sign-in
 // flow - see Login's doc comment for why neither can know a tenant_id up
 // front).
-func (s *Service) issueSession(ctx context.Context, user *User, userAgent, ip string) (*SessionTokens, error) {
+func (s *Service) issueSession(ctx context.Context, user *User, client ClientInfo) (*SessionTokens, error) {
 	access, _, accessExpiresAt, err := s.tokens.IssueUserAccessToken(user.ID, user.IsSuperAdmin, "", s.cfg.AccessTokenTTL)
 	if err != nil {
 		return nil, err
 	}
 
-	rawRefresh, refreshHash, refreshExpiresAt, err := s.newRefreshToken()
+	// A login starts a new session: a fresh family whose hard cap is fixed
+	// here and never extended by later rotations.
+	now := time.Now().UTC()
+	rawRefresh, record, err := s.newRefreshTokenRecord(user.ID, security.MustNewUUIDv4(), now.Add(s.cfg.RefreshAbsoluteTTL), client)
 	if err != nil {
 		return nil, err
-	}
-
-	record := &RefreshToken{
-		ID:        security.MustNewUUIDv4(),
-		UserID:    user.ID,
-		TokenHash: refreshHash,
-		UserAgent: ptrOrNil(userAgent),
-		IPAddress: ptrOrNil(ip),
-		ExpiresAt: refreshExpiresAt,
-		CreatedAt: time.Now().UTC(),
 	}
 	if err := s.repo.CreateRefreshToken(ctx, record); err != nil {
 		return nil, err
@@ -460,18 +477,35 @@ func (s *Service) issueSession(ctx context.Context, user *User, userAgent, ip st
 		AccessToken:           access,
 		AccessTokenExpiresAt:  accessExpiresAt,
 		RefreshToken:          rawRefresh,
-		RefreshTokenExpiresAt: refreshExpiresAt,
+		RefreshTokenExpiresAt: record.ExpiresAt,
 	}, nil
 }
 
-func (s *Service) newRefreshToken() (raw, hash string, expiresAt time.Time, err error) {
+// newRefreshTokenRecord builds (without persisting) a refresh token in the
+// given session family. Its idle expiry is now+RefreshTokenTTL, clamped to
+// the family's absolute cap.
+func (s *Service) newRefreshTokenRecord(userID, familyID string, absoluteExpiresAt time.Time, client ClientInfo) (raw string, rec *RefreshToken, err error) {
 	raw, err = security.GenerateOpaqueToken(32)
 	if err != nil {
-		return "", "", time.Time{}, err
+		return "", nil, err
 	}
-	hash = security.HashToken(raw)
-	expiresAt = time.Now().UTC().Add(s.cfg.RefreshTokenTTL)
-	return raw, hash, expiresAt, nil
+	now := time.Now().UTC()
+	expiresAt := now.Add(s.cfg.RefreshTokenTTL)
+	if expiresAt.After(absoluteExpiresAt) {
+		expiresAt = absoluteExpiresAt
+	}
+	return raw, &RefreshToken{
+		ID:                security.MustNewUUIDv4(),
+		UserID:            userID,
+		TokenHash:         security.HashToken(raw),
+		UserAgent:         ptrOrNil(client.UserAgent),
+		IPAddress:         ptrOrNil(client.IP),
+		FamilyID:          familyID,
+		ExpiresAt:         expiresAt,
+		AbsoluteExpiresAt: absoluteExpiresAt,
+		OriginHost:        ptrOrNil(client.OriginHost),
+		CreatedAt:         now,
+	}, nil
 }
 
 func (s *Service) issueEmailToken(ctx context.Context, userID string, purpose EmailTokenPurpose, ttl time.Duration) (string, error) {

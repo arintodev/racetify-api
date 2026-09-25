@@ -7,15 +7,18 @@ import (
 
 	"github.com/racetify/racetify-api/internal/httpapi/reqctx"
 	"github.com/racetify/racetify-api/internal/httpapi/respond"
+	"github.com/racetify/racetify-api/internal/platform/originpolicy"
 	"github.com/racetify/racetify-api/internal/platform/rbac"
 )
 
 type Handler struct {
 	events *Service
+	// origins validates the frontend origin an emailed link should point at.
+	origins *originpolicy.Policy
 }
 
-func NewHandler(events *Service) *Handler {
-	return &Handler{events: events}
+func NewHandler(events *Service, origins *originpolicy.Policy) *Handler {
+	return &Handler{events: events, origins: origins}
 }
 
 // ==================== events ====================

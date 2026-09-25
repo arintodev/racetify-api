@@ -25,6 +25,7 @@ func objectResponse(o *Object) ObjectDTO {
 // UploadTicketDTO is RequestUpload's response: where to PUT the raw bytes,
 // and when that grant expires.
 type UploadTicketDTO struct {
+	ID        string    `json:"id"`
 	UploadURL string    `json:"upload_url"`
 	ExpiresAt time.Time `json:"expires_at"`
 	Bucket    string    `json:"bucket"`

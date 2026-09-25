@@ -16,4 +16,7 @@ var (
 	ErrAccountSuspended   = errors.New("domain: account suspended")
 	ErrForbidden          = errors.New("domain: forbidden")
 	ErrInvalidScope       = errors.New("domain: invalid or unauthorized scope")
+	ErrInvalidOTP         = errors.New("domain: invalid or expired verification code")
+	ErrRateLimited        = errors.New("domain: too many requests")
+	ErrTermsNotAccepted   = errors.New("domain: terms of service and privacy policy must be accepted")
 )

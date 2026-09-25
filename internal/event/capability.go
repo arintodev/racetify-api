@@ -13,6 +13,9 @@ const (
 	CapabilityRPCCheckin       = "rpc:checkin"
 	CapabilityResultsWrite     = "results:write"
 	CapabilityGalleryUpload    = "gallery:upload"
+	// CapabilityGalleryReview allows manual tagging and re-running OCR on an
+	// event's photos, but not deleting them or publishing albums.
+	CapabilityGalleryReview = "gallery:review"
 )
 
 // AllCapabilities is what an internal Staff/Admin/Owner caller effectively
@@ -26,6 +29,7 @@ var AllCapabilities = []string{
 	CapabilityRPCCheckin,
 	CapabilityResultsWrite,
 	CapabilityGalleryUpload,
+	CapabilityGalleryReview,
 }
 
 var validCapabilities = map[string]bool{
@@ -33,6 +37,7 @@ var validCapabilities = map[string]bool{
 	CapabilityRPCCheckin:       true,
 	CapabilityResultsWrite:     true,
 	CapabilityGalleryUpload:    true,
+	CapabilityGalleryReview:    true,
 }
 
 func IsValidCapability(capability string) bool {
