@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS font_files;
+DROP TABLE IF EXISTS fonts;

@@ -50,13 +50,12 @@ func requireAdmin(actor rbac.MemberRole) error {
 // SVGURL returns a way to fetch the template's SVG: a time-limited presigned
 // URL for a private object (expiry set), a stable URL for a public one.
 func (s *Service) SVGURL(t *Template) (url string, expires *time.Time, err error) {
-	bucket := objectstorage.Bucket(t.Bucket)
-	if bucket == objectstorage.BucketPublic {
-		return s.store.PublicURL(t.TenantID, t.ObjectKey), nil, nil
-	}
-	ticket, err := s.store.PresignDownload(bucket, t.TenantID, t.ObjectKey, s.cfg.DownloadTTL)
+	ticket, err := objectstorage.GetURL(s.store, objectstorage.Bucket(t.Bucket), t.TenantID, t.ObjectKey, s.cfg.DownloadTTL)
 	if err != nil {
 		return "", nil, err
+	}
+	if ticket.ExpiresAt.IsZero() {
+		return ticket.URL, nil, nil
 	}
 	return ticket.URL, &ticket.ExpiresAt, nil
 }

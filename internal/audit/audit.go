@@ -71,6 +71,13 @@ const (
 
 	ActionBibGenerationRequested = "bib_generation.requested"
 	ActionCertificateGenerated   = "certificate.generated"
+	ActionCertificateDeleted     = "certificate.deleted"
+	ActionFontCreated            = "font.created"
+	ActionFontUpdated            = "font.updated"
+	ActionFontDeleted            = "font.deleted"
+	ActionFontFileSaved          = "font.file_saved"
+	ActionFontFileRemoved        = "font.file_removed"
+	ActionCertificatesPublished  = "certificate.published"
 
 	ActionPhotoUploaded     = "photo.uploaded"
 	ActionPhotoTagCorrected = "photo_tag.corrected"

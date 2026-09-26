@@ -16,8 +16,11 @@ import (
 	"time"
 
 	"github.com/racetify/racetify-api/internal/auth"
+	"github.com/racetify/racetify-api/internal/bibprint"
+	"github.com/racetify/racetify-api/internal/certificate"
 	"github.com/racetify/racetify-api/internal/config"
 	"github.com/racetify/racetify-api/internal/event"
+	"github.com/racetify/racetify-api/internal/fontlib"
 	"github.com/racetify/racetify-api/internal/gallery"
 	"github.com/racetify/racetify-api/internal/generator"
 	"github.com/racetify/racetify-api/internal/httpapi/handlers"
@@ -59,6 +62,9 @@ type Deps struct {
 	Events       *event.Service
 	Participants *participant.Service
 	Templates    *generator.Service
+	Certificates *certificate.Service
+	BibPrint     *bibprint.Service
+	Fonts        *fontlib.Service
 	Gallery      *gallery.Service
 	JobQueue     *jobqueue.Queue
 }
@@ -90,6 +96,9 @@ func NewRouter(d Deps) http.Handler {
 	invitepreview.RegisterRoutes(mux, mw, d.Tenants, d.Events)
 	participant.RegisterRoutes(mux, mw, d.Participants, d.Events)
 	generator.RegisterRoutes(mux, mw, d.Templates)
+	certificate.RegisterRoutes(mux, mw, d.Certificates)
+	bibprint.RegisterRoutes(mux, mw, d.BibPrint)
+	fontlib.RegisterRoutes(mux, mw, d.Fonts)
 	gallery.RegisterRoutes(mux, mw, d.Gallery, d.Events)
 	jobqueue.RegisterRoutes(mux, mw, d.JobQueue)
 

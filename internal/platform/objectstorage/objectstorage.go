@@ -285,15 +285,18 @@ func ValidateKey(key string) error {
 	return nil
 }
 
-// presignURL builds the {ObjectURLPath}/{bucket}/{tenantID}/{key}?expires=&sig=
-// URL every driver's presign returns - see presign.go's presigner.
-func presignURL(bucket Bucket, tenantID, key string, expiresUnix int64, sig string) string {
+// presignURL builds the {baseURL}{ObjectURLPath}/{bucket}/{tenantID}/{key}?expires=&sig=
+// URL the local driver's presign returns - see presign.go's presigner.
+// baseURL (STORAGE_PUBLIC_BASE_URL, no trailing slash) makes the URL
+// absolute so a browser on another origin (the dashboard) fetches it from
+// this API, not from itself.
+func presignURL(baseURL string, bucket Bucket, tenantID, key string, expiresUnix int64, sig string) string {
 	u := url.URL{Path: ObjectURLPath + "/" + string(bucket) + "/" + tenantID + "/" + key}
 	q := u.Query()
 	q.Set("expires", strconv.FormatInt(expiresUnix, 10))
 	q.Set("sig", sig)
 	u.RawQuery = q.Encode()
-	return u.String()
+	return baseURL + u.String()
 }
 
 // ReadAll is a small helper the HTTP layer uses to cap upload size before
@@ -303,4 +306,15 @@ func ReadAll(r io.Reader) ([]byte, error) {
 	var buf bytes.Buffer
 	_, err := io.Copy(&buf, r)
 	return buf.Bytes(), err
+}
+
+// GetURL is the one place an object's fetch URL is decided before it goes
+// to a client: a stable, unsigned URL for a public-bucket object (zero
+// Ticket.ExpiresAt), a time-limited presigned GET for a private one. ttl
+// applies to the private case only.
+func GetURL(d Driver, bucket Bucket, tenantID, key string, ttl time.Duration) (Ticket, error) {
+	if bucket == BucketPublic {
+		return Ticket{URL: d.PublicURL(tenantID, key)}, nil
+	}
+	return d.PresignDownload(bucket, tenantID, key, ttl)
 }

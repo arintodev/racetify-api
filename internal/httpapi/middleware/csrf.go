@@ -24,7 +24,8 @@ func CSRF(policy *originpolicy.Policy) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			hasCookies := hasCookie(r, AccessCookieName) || hasCookie(r, RefreshCookieName)
+			_, hasAccess := r.Cookie(AccessCookieName)
+			hasCookies := hasAccess == nil || hasCookie(r, "racetify_refresh_token")
 			isAuthEndpoint := strings.HasPrefix(r.URL.Path, "/api/v1/auth/")
 			if !hasCookies && !isAuthEndpoint {
 				next.ServeHTTP(w, r)
@@ -46,7 +47,7 @@ func CSRF(policy *originpolicy.Policy) func(http.Handler) http.Handler {
 				forbidden(w)
 				return
 			}
-			if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
+			if site := r.Header.Get("Sec-Fetch-Site"); site == "cross-site" {
 				forbidden(w)
 				return
 			}

@@ -248,7 +248,7 @@ func (s *Service) ListPhotos(ctx context.Context, tenantID, eventID string, f Ph
 // the job made one, else the original, so the grid shows something as soon
 // as the upload is complete. Original is always the stored 2048 px file.
 func (s *Service) PhotoURLs(p *Photo) (preview, original string, err error) {
-	ticket, err := s.store.PresignDownload(objectstorage.Bucket(p.OriginalBucket), p.TenantID, p.OriginalKey, s.cfg.DownloadTTL)
+	ticket, err := objectstorage.GetURL(s.store, objectstorage.Bucket(p.OriginalBucket), p.TenantID, p.OriginalKey, s.cfg.DownloadTTL)
 	if err != nil {
 		return "", "", err
 	}
@@ -256,10 +256,7 @@ func (s *Service) PhotoURLs(p *Photo) (preview, original string, err error) {
 	if p.ThumbBucket == nil || p.ThumbKey == nil {
 		return original, original, nil
 	}
-	if objectstorage.Bucket(*p.ThumbBucket) == objectstorage.BucketPublic {
-		return s.store.PublicURL(p.TenantID, *p.ThumbKey), original, nil
-	}
-	thumb, err := s.store.PresignDownload(objectstorage.Bucket(*p.ThumbBucket), p.TenantID, *p.ThumbKey, s.cfg.DownloadTTL)
+	thumb, err := objectstorage.GetURL(s.store, objectstorage.Bucket(*p.ThumbBucket), p.TenantID, *p.ThumbKey, s.cfg.DownloadTTL)
 	if err != nil {
 		return "", "", err
 	}

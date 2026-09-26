@@ -145,10 +145,7 @@ func (s *Service) RequestDownload(ctx context.Context, tenantID, key, bucketStr 
 		return nil, fmt.Errorf("service: %w: object upload has not completed yet", domain.ErrInvalidState)
 	}
 
-	if bucket == objectstorage.BucketPublic {
-		return &DownloadTicket{URL: s.store.PublicURL(tenantID, key)}, nil
-	}
-	ticket, err := s.store.PresignDownload(bucket, tenantID, key, s.cfg.DownloadTTL)
+	ticket, err := objectstorage.GetURL(s.store, bucket, tenantID, key, s.cfg.DownloadTTL)
 	if err != nil {
 		return nil, err
 	}

@@ -26,5 +26,6 @@ type JobType string
 const (
 	JobTypeParticipantsImport JobType = "participants.import"
 	JobTypeGeneratorBibBatch  JobType = "generator.bib_batch"
+	JobTypeCertificatesBatch  JobType = "certificates.batch"
 	JobTypeMediaPhotoProcess  JobType = "media.photo_process"
 )

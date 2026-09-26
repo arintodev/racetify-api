@@ -105,7 +105,7 @@ func measure(t *testing.T, key string, bold bool, sizePt float64, text string) f
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.useFont(key, bold, sizePt); err != nil {
+	if _, err := d.useFont(key, FontStyle{Bold: bold}, sizePt); err != nil {
 		t.Fatal(err)
 	}
 	w, err := d.pdf.MeasureTextWidth(text)
@@ -117,7 +117,7 @@ func measure(t *testing.T, key string, bold bool, sizePt float64, text string) f
 
 func metricsOf(t *testing.T, key string, bold bool) FontMetrics {
 	t.Helper()
-	ttf, err := BundledFonts{}.TTF(key, bold)
+	ttf, err := BundledFonts{}.TTF(key, FontStyle{Bold: bold})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestFontMetricsAreThoseOfLiberationSans(t *testing.T) {
 	}
 }
 
-func TestFontKeyFor(t *testing.T) {
+func TestResolveFontKey(t *testing.T) {
 	cases := map[string]string{
 		"Arial, Helvetica, sans-serif":            FontLiberationSans,
 		"'Arial Black', 'Arial Bold', sans-serif": FontLiberationSans,
@@ -146,16 +146,35 @@ func TestFontKeyFor(t *testing.T) {
 		"Verdana, Geneva, sans-serif":             FontDejaVuSans,
 		"Georgia, 'Times New Roman', serif":       FontLiberationSerif,
 		"'Courier New', Courier, monospace":       FontLiberationMono,
-		"Comic Sans MS":                           DefaultFont,
-		"":                                        DefaultFont,
+		"sans-serif":                              FontLiberationSans,
 	}
 	for css, want := range cases {
-		if got := FontKeyFor("", css); got != want {
-			t.Errorf("FontKeyFor(%q) = %s, want %s", css, got, want)
+		if got, ok := ResolveFontKey("", css); !ok || got != want {
+			t.Errorf("ResolveFontKey(%q) = %s, %v, want %s", css, got, ok, want)
 		}
 	}
-	if got := FontKeyFor("tenant:abc", "Arial"); got != "tenant:abc" {
+	// A family that is not one of the old editor's has no key: no silent fallback.
+	for _, css := range []string{"Comic Sans MS", "Bebas Neue", ""} {
+		if key, ok := ResolveFontKey("", css); ok {
+			t.Errorf("ResolveFontKey(%q) = %s, want no key", css, key)
+		}
+	}
+	if got, ok := ResolveFontKey("lib:abc", "Arial"); !ok || got != "lib:abc" {
 		t.Errorf("an explicit key must win, got %s", got)
+	}
+}
+
+func TestBundledFontsHaveAllStyles(t *testing.T) {
+	for _, family := range BundledFamilies() {
+		for _, style := range StyleNames {
+			fs, _ := ParseFontStyle(style)
+			if _, err := (BundledFonts{}).TTF(family.Key, fs); err != nil {
+				t.Errorf("%s %s: %v", family.Key, style, err)
+			}
+		}
+	}
+	if _, err := (BundledFonts{}).TTF("lib:missing", FontStyle{}); !errors.Is(err, ErrFontUnknown) {
+		t.Errorf("unknown key: %v", err)
 	}
 }
 
@@ -342,4 +361,4 @@ func TestRenderRefusesWhatItCannotPrint(t *testing.T) {
 
 type noFonts struct{}
 
-func (noFonts) TTF(string, bool) ([]byte, error) { return nil, errors.New("no such font") }
+func (noFonts) TTF(string, FontStyle) ([]byte, error) { return nil, errors.New("no such font") }

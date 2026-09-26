@@ -6,17 +6,16 @@ import "net/http"
 // in (set by the auth handlers, see internal/auth/cookies.go).
 const AccessCookieName = "racetify_access"
 
-// RefreshCookieName is the cookie holding a browser's refresh token.
-const RefreshCookieName = "racetify_refresh_token"
-
 // userAccessToken finds the caller's access token: an Authorization header
-// (API clients) wins, otherwise the access cookie (browsers).
-func userAccessToken(r *http.Request) (raw string, ok bool) {
+// (API clients) wins, otherwise the access cookie (browsers). The second
+// result says which, since a cookie is sent by the browser on its own and so
+// needs the CSRF check in CSRF.
+func userAccessToken(r *http.Request) (raw string, fromCookie, ok bool) {
 	if raw, ok := bearerToken(r); ok {
-		return raw, true
+		return raw, false, true
 	}
 	if c, err := r.Cookie(AccessCookieName); err == nil && c.Value != "" {
-		return c.Value, true
+		return c.Value, true, true
 	}
-	return "", false
+	return "", false, false
 }

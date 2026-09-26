@@ -185,11 +185,11 @@ func newPDFDoc(sheet Size, fonts FontProvider, rasters [][]byte) (*pdfDoc, error
 }
 
 // useFont registers a font on first use and makes it current.
-func (d *pdfDoc) useFont(key string, bold bool, sizePt float64) (FontMetrics, error) {
-	id := fmt.Sprintf("%s|%t", key, bold)
+func (d *pdfDoc) useFont(key string, style FontStyle, sizePt float64) (FontMetrics, error) {
+	id := key + "|" + style.Name()
 	f, ok := d.loaded[id]
 	if !ok {
-		ttf, err := d.fonts.TTF(key, bold)
+		ttf, err := d.fonts.TTF(key, style)
 		if err != nil {
 			return FontMetrics{}, err
 		}
@@ -245,10 +245,14 @@ func (d *pdfDoc) drawBIB(art *Artwork, cell PlacedCell, bleed float64, ctx TagCo
 func (d *pdfDoc) drawText(cell PlacedCell, it TextItem, ctx TagContext) error {
 	text := FillTags(strings.Join(it.Lines, "\n"), ctx)
 	lines := strings.Split(text, "\n")
-	key := FontKeyFor(it.FontKey, it.FontFamily)
+	key, ok := ResolveFontKey(it.FontKey, it.FontFamily)
+	if !ok {
+		return fmt.Errorf("%w: %q", ErrFontUnknown, FamilyName(it.FontFamily))
+	}
+	style := FontStyle{Bold: it.Bold, Italic: it.Italic}
 
 	size := it.FontSizePt
-	metrics, err := d.useFont(key, it.Bold, size)
+	metrics, err := d.useFont(key, style, size)
 	if err != nil {
 		return err
 	}
@@ -271,7 +275,7 @@ func (d *pdfDoc) drawText(cell PlacedCell, it TextItem, ctx TagContext) error {
 	// Shrink to fit the box width when the value is too long.
 	if it.AutoScale && widest > it.Box.W {
 		size = max(MinFontPt, size*it.Box.W/widest)
-		if metrics, err = d.useFont(key, it.Bold, size); err != nil {
+		if metrics, err = d.useFont(key, style, size); err != nil {
 			return err
 		}
 		if lineWidths, _, err = widths(); err != nil {

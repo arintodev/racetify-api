@@ -13,8 +13,11 @@ import (
 
 	"github.com/racetify/racetify-api/internal/audit"
 	"github.com/racetify/racetify-api/internal/auth"
+	"github.com/racetify/racetify-api/internal/bibprint"
+	"github.com/racetify/racetify-api/internal/certificate"
 	"github.com/racetify/racetify-api/internal/config"
 	"github.com/racetify/racetify-api/internal/event"
+	"github.com/racetify/racetify-api/internal/fontlib"
 	"github.com/racetify/racetify-api/internal/gallery"
 	"github.com/racetify/racetify-api/internal/generator"
 	"github.com/racetify/racetify-api/internal/httpapi"
@@ -122,9 +125,12 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 	participants := participant.NewRepository(appDB)
 	participantService := participant.NewService(appDB, participants, auditRepo)
 	templateService := generator.NewService(appDB, generator.NewRepository(appDB), auditRepo, objectStore, cfg.Storage)
+	jobQueue := jobqueue.NewQueue(appDB, jobs, redisClient)
+	fontService := fontlib.NewService(appDB, fontlib.NewRepository(appDB, adminDB), auditRepo)
+	certificateService := certificate.NewService(appDB, certificate.NewRepository(appDB), auditRepo, objectStore, cfg.Storage, jobQueue, templateService, storageService, fontService)
 	galleryService := gallery.NewService(appDB, gallery.NewRepository(appDB), auditRepo, storageService, objectStore, cfg.Storage)
 	eventService := event.NewService(appDB, events, auditRepo, authRepo, mail, cfg.Auth, tenants)
-	jobQueue := jobqueue.NewQueue(appDB, jobs, redisClient)
+	bibPrintService := bibprint.NewService(appDB, jobQueue, auditRepo, templateService, participantService, storageService, fontService)
 
 	return &App{
 		AppDB:   appDB,
@@ -148,6 +154,9 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 			Events:       eventService,
 			Participants: participantService,
 			Templates:    templateService,
+			Certificates: certificateService,
+			BibPrint:     bibPrintService,
+			Fonts:        fontService,
 			Gallery:      galleryService,
 			JobQueue:     jobQueue,
 		},

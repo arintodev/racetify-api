@@ -66,6 +66,7 @@ type TextItem struct {
 	FontFamily string // CSS font-family as written
 	FontSizePt float64
 	Bold       bool
+	Italic     bool
 	Color      RGB
 	Align      string // left | center | right
 	VAlign     string // top | middle | bottom
@@ -289,6 +290,9 @@ func readText(dec *xml.Decoder, el xml.StartElement) (TextItem, error) {
 		item.Bold = w >= 600
 	} else {
 		item.Bold = attr(el, "font-weight") == "bold"
+	}
+	if style := attr(el, "font-style"); style == "italic" || style == "oblique" {
+		item.Italic = true
 	}
 	switch attr(el, "text-anchor") {
 	case "middle":

@@ -18,6 +18,8 @@ type svgFixtures struct {
 		Align     *string   `json:"align"`
 		VAlign    *string   `json:"valign"`
 		Bold      *bool     `json:"bold"`
+		Italic    bool      `json:"italic"`
+		FontKey   *string   `json:"fontKey"`
 		AutoScale *bool     `json:"autoScale"`
 		Color     *string   `json:"color"`
 		Lines     []string  `json:"lines"`
@@ -65,6 +67,17 @@ func TestParseTemplateReadsWhatTheDashboardWrites(t *testing.T) {
 		}
 		if it.Align != *want.Align || it.VAlign != *want.VAlign || it.Bold != *want.Bold || it.AutoScale != *want.AutoScale {
 			t.Errorf("item %d style %+v, want align=%s valign=%s bold=%v auto=%v", i, it, *want.Align, *want.VAlign, *want.Bold, *want.AutoScale)
+		}
+		if it.Italic != want.Italic {
+			t.Errorf("item %d italic %v, want %v", i, it.Italic, want.Italic)
+		}
+		if wantKey := ""; want.FontKey != nil {
+			wantKey = *want.FontKey
+			if it.FontKey != wantKey {
+				t.Errorf("item %d font key %q, want %q", i, it.FontKey, wantKey)
+			}
+		} else if it.FontKey != "" {
+			t.Errorf("item %d has font key %q, want none", i, it.FontKey)
 		}
 		if strings.Join(it.Lines, "|") != strings.Join(want.Lines, "|") {
 			t.Errorf("item %d lines %q, want %q", i, it.Lines, want.Lines)

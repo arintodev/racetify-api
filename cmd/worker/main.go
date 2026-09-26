@@ -21,6 +21,8 @@ import (
 	"syscall"
 
 	"github.com/racetify/racetify-api/internal/app"
+	"github.com/racetify/racetify-api/internal/bibprint"
+	"github.com/racetify/racetify-api/internal/certificate"
 	"github.com/racetify/racetify-api/internal/config"
 	"github.com/racetify/racetify-api/internal/jobqueue"
 	"github.com/racetify/racetify-api/internal/platform/logger"
@@ -48,6 +50,9 @@ func main() {
 	//   participantimport.RegisterJob(dispatcher, a.Handler.Participant)
 	//   generator.RegisterJob(dispatcher, a.Handler.Generator)
 	//   gallery.RegisterJobs(dispatcher, a.Handler.Gallery)
+
+	bibprint.RegisterJob(dispatcher, a.Handler.BibPrint)
+	certificate.RegisterJob(dispatcher, a.Handler.Certificates)
 
 	log.Info("racetify-worker starting", "env", cfg.Env)
 	jobqueue.Run(ctx, a.Handler.JobQueue, dispatcher, log)

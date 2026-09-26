@@ -82,7 +82,7 @@ func (p *presigner) presign(method string, bucket Bucket, tenantID, key string, 
 	expiresAt := time.Now().Add(ttl)
 	expiresUnix := expiresAt.Unix()
 	sig := p.sign(method, bucket, tenantID, key, expiresUnix)
-	return Ticket{URL: presignURL(bucket, tenantID, key, expiresUnix, sig), ExpiresAt: expiresAt}, nil
+	return Ticket{URL: presignURL(p.publicBaseURL, bucket, tenantID, key, expiresUnix, sig), ExpiresAt: expiresAt}, nil
 }
 
 // PublicURL returns the stable, unsigned URL for a public-bucket object -

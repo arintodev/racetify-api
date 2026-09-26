@@ -34,7 +34,7 @@ func bearerToken(r *http.Request) (string, bool) {
 func RequireUserAuth(tokens *security.TokenManager, isRevoked func(ctx context.Context, jti string) bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			raw, ok := userAccessToken(r)
+			raw, _, ok := userAccessToken(r)
 			if !ok {
 				respond.Error(w, http.StatusUnauthorized, "unauthorized", "Not signed in.")
 				return

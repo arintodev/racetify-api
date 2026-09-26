@@ -1,5 +1,5 @@
 {
- "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"200mm\" height=\"150mm\" viewBox=\"0 0 200 150\"><text data-box=\"20 30 160 60\" data-auto-scale=\"false\" x=\"100\" y=\"60\" dominant-baseline=\"central\" text-anchor=\"middle\" font-family=\"'Arial Black', 'Arial Bold', sans-serif\" font-size=\"33.87\" font-weight=\"700\" fill=\"#111111\">{{BIB_NUMBER}}</text><text data-box=\"10 100 120 14\" data-auto-scale=\"true\" x=\"10\" y=\"100\" dominant-baseline=\"text-before-edge\" text-anchor=\"start\" font-family=\"Georgia, 'Times New Roman', serif\" font-size=\"9.88\" font-weight=\"700\" fill=\"#cc0000\">{{FULL_NAME}}</text><text data-box=\"10 120 180 12\" data-auto-scale=\"true\" x=\"190\" y=\"132\" dominant-baseline=\"text-after-edge\" text-anchor=\"end\" font-family=\"'Courier New', Courier, monospace\" font-size=\"6.35\" font-weight=\"400\" fill=\"#0a0\">{{CLUB}}</text><text data-box=\"10 5 100 20\" data-kind=\"text\" data-auto-scale=\"false\" x=\"10\" y=\"5\" dominant-baseline=\"text-before-edge\" text-anchor=\"start\" font-family=\"Verdana, Geneva, sans-serif\" font-size=\"4.94\" font-weight=\"700\" fill=\"#123456\"><tspan x=\"10\" y=\"5\">Leg {{LEG_ORDER}}</tspan><tspan x=\"10\" y=\"10.93\">Relay &amp; &quot;Tim&quot; &lt;A&gt;</tspan></text><rect data-tag=\"QR_CODE_BIB\" data-box=\"150 100 30 30\" x=\"150\" y=\"100\" width=\"30\" height=\"30\" fill=\"none\"/></svg>",
+ "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"200mm\" height=\"150mm\" viewBox=\"0 0 200 150\"><text data-box=\"20 30 160 60\" data-auto-scale=\"false\" x=\"100\" y=\"60\" dominant-baseline=\"central\" text-anchor=\"middle\" font-family=\"'Liberation Sans', sans-serif\" data-font=\"bundled:liberation-sans\" font-size=\"33.87\" font-weight=\"700\" fill=\"#111111\">{{BIB_NUMBER}}</text><text data-box=\"10 100 120 14\" data-auto-scale=\"true\" x=\"10\" y=\"100\" dominant-baseline=\"text-before-edge\" text-anchor=\"start\" font-family=\"Georgia, 'Times New Roman', serif\" data-font=\"bundled:liberation-serif\" font-size=\"9.88\" font-weight=\"700\" fill=\"#cc0000\">{{FULL_NAME}}</text><text data-box=\"10 120 180 12\" data-auto-scale=\"true\" x=\"190\" y=\"132\" dominant-baseline=\"text-after-edge\" text-anchor=\"end\" font-family=\"'Courier New', Courier, monospace\" data-font=\"bundled:liberation-mono\" font-size=\"6.35\" font-weight=\"400\" fill=\"#0a0\">{{CLUB}}</text><text data-box=\"10 5 100 20\" data-kind=\"text\" data-auto-scale=\"false\" x=\"10\" y=\"5\" dominant-baseline=\"text-before-edge\" text-anchor=\"start\" font-family=\"Verdana, Geneva, sans-serif\" data-font=\"bundled:dejavu-sans\" font-style=\"italic\" font-size=\"4.94\" font-weight=\"700\" fill=\"#123456\"><tspan x=\"10\" y=\"5\">Leg {{LEG_ORDER}}</tspan><tspan x=\"10\" y=\"10.93\">Relay &amp; &quot;Tim&quot; &lt;A&gt;</tspan></text><rect data-tag=\"QR_CODE_BIB\" data-box=\"150 100 30 30\" x=\"150\" y=\"100\" width=\"30\" height=\"30\" fill=\"none\"/></svg>",
  "widthMm": 200,
  "heightMm": 150,
  "expected": [
@@ -16,12 +16,14 @@
    "align": "center",
    "valign": "middle",
    "bold": true,
+   "italic": false,
+   "fontKey": "bundled:liberation-sans",
    "autoScale": false,
    "color": "#111111",
    "lines": [
     "{{BIB_NUMBER}}"
    ],
-   "family": "'Arial Black', 'Arial Bold', sans-serif"
+   "family": "'Liberation Sans', sans-serif"
   },
   {
    "kind": "text",
@@ -36,6 +38,8 @@
    "align": "left",
    "valign": "top",
    "bold": true,
+   "italic": false,
+   "fontKey": "bundled:liberation-serif",
    "autoScale": true,
    "color": "#cc0000",
    "lines": [
@@ -56,6 +60,8 @@
    "align": "right",
    "valign": "bottom",
    "bold": false,
+   "italic": false,
+   "fontKey": "bundled:liberation-mono",
    "autoScale": true,
    "color": "#0a0",
    "lines": [
@@ -76,6 +82,8 @@
    "align": "left",
    "valign": "top",
    "bold": true,
+   "italic": true,
+   "fontKey": "bundled:dejavu-sans",
    "autoScale": false,
    "color": "#123456",
    "lines": [
@@ -97,10 +105,12 @@
    "align": "center",
    "valign": "middle",
    "bold": true,
+   "italic": false,
+   "fontKey": "bundled:liberation-sans",
    "autoScale": true,
    "color": "#111111",
    "lines": null,
-   "family": "'Arial Black', 'Arial Bold', sans-serif"
+   "family": "'Liberation Sans', sans-serif"
   }
  ]
 }

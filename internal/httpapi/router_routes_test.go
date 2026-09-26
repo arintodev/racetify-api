@@ -7,8 +7,11 @@ import (
 	"testing"
 
 	"github.com/racetify/racetify-api/internal/auth"
+	"github.com/racetify/racetify-api/internal/bibprint"
+	"github.com/racetify/racetify-api/internal/certificate"
 	"github.com/racetify/racetify-api/internal/config"
 	"github.com/racetify/racetify-api/internal/event"
+	"github.com/racetify/racetify-api/internal/fontlib"
 	"github.com/racetify/racetify-api/internal/generator"
 	"github.com/racetify/racetify-api/internal/jobqueue"
 	"github.com/racetify/racetify-api/internal/oauthclient"
@@ -30,7 +33,7 @@ func TestRoutesRegister(t *testing.T) {
 		Tokens: security.NewTokenManager("test-secret", "test"),
 		Auth:   &auth.Service{}, Google: &auth.GoogleService{}, Tenants: &tenant.Service{},
 		OAuthClient: &oauthclient.Service{}, Storage: &storage.Service{},
-		Events: &event.Service{}, Participants: &participant.Service{}, Templates: &generator.Service{}, JobQueue: &jobqueue.Queue{},
+		Events: &event.Service{}, Participants: &participant.Service{}, Templates: &generator.Service{}, Certificates: &certificate.Service{}, BibPrint: &bibprint.Service{}, Fonts: &fontlib.Service{}, JobQueue: &jobqueue.Queue{},
 	})
 
 	// Unauthenticated requests must be turned away before any service is
@@ -48,6 +51,23 @@ func TestRoutesRegister(t *testing.T) {
 		{"POST", "/api/v1/events/abc/templates"},
 		{"PATCH", "/api/v1/events/abc/templates/def"},
 		{"DELETE", "/api/v1/events/abc/templates/def"},
+		{"POST", "/api/v1/events/abc/bib-generation"},
+		{"GET", "/api/v1/fonts"},
+		{"GET", "/api/v1/fonts/files/abc/bold"},
+		{"GET", "/api/v1/fonts/bundled/liberation-sans/regular"},
+		{"GET", "/api/v1/admin/fonts"},
+		{"POST", "/api/v1/admin/fonts"},
+		{"GET", "/api/v1/admin/fonts/demand"},
+		{"PATCH", "/api/v1/admin/fonts/abc"},
+		{"DELETE", "/api/v1/admin/fonts/abc"},
+		{"PUT", "/api/v1/admin/fonts/abc/files/bold"},
+		{"DELETE", "/api/v1/admin/fonts/abc/files/bold"},
+		{"GET", "/api/v1/events/abc/bib-generation/job1/download"},
+		{"GET", "/api/v1/events/abc/certificates"},
+		{"PUT", "/api/v1/events/abc/certificates/def"},
+		{"DELETE", "/api/v1/events/abc/certificates/def"},
+		{"POST", "/api/v1/events/abc/certificates/publish"},
+		{"POST", "/api/v1/events/abc/certificates/generate"},
 	} {
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, nil))

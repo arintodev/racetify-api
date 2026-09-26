@@ -28,9 +28,10 @@ type Size struct {
 }
 
 var paperSizes = map[string]Size{
-	"a4":   {W: 210, H: 297},
-	"a3":   {W: 297, H: 420},
-	"sra3": {W: 320, H: 450},
+	"a4":     {W: 210, H: 297},
+	"a3":     {W: 297, H: 420},
+	"a3plus": {W: 329, H: 483},
+	"sra3":   {W: 320, H: 450},
 }
 
 // Layout is how BIBs are laid out on a sheet.
@@ -42,6 +43,16 @@ type Layout struct {
 	CropMarks   bool    `json:"cropMarks"`
 	GutterMM    float64 `json:"gutterMm"`
 	BleedMM     float64 `json:"bleedMm"`
+	// MarginMM is kept clear at every sheet edge; nil means SheetMarginMM.
+	MarginMM *float64 `json:"marginMm,omitempty"`
+}
+
+// Margin is the room kept clear at every sheet edge.
+func (l Layout) Margin() float64 {
+	if l.MarginMM == nil {
+		return SheetMarginMM
+	}
+	return *l.MarginMM
 }
 
 // PlacedCell is where one BIB's trim box sits on a sheet.
@@ -85,7 +96,7 @@ func MaxGrid(cell Size, l Layout) (cols, rows int, err error) {
 	fit := func(available, size float64) int {
 		return int(math.Max(0, math.Floor((available+l.GutterMM)/(size+2*l.BleedMM+l.GutterMM))))
 	}
-	return fit(sheet.W-2*SheetMarginMM, cell.W), fit(sheet.H-2*SheetMarginMM, cell.H), nil
+	return fit(sheet.W-2*l.Margin(), cell.W), fit(sheet.H-2*l.Margin(), cell.H), nil
 }
 
 // Validate rejects a layout that is malformed or does not fit its paper.
@@ -95,6 +106,9 @@ func (l Layout) Validate(cell Size) error {
 	}
 	if l.GutterMM < 0 || l.BleedMM < 0 || l.GutterMM > 50 || l.BleedMM > 20 {
 		return fmt.Errorf("generator: gutter or bleed out of range")
+	}
+	if l.Margin() < 0 || l.Margin() > 50 {
+		return fmt.Errorf("generator: margin out of range")
 	}
 	cols, rows, err := MaxGrid(cell, l)
 	if err != nil {
