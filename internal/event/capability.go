@@ -16,6 +16,11 @@ const (
 	// CapabilityGalleryReview allows manual tagging and re-running OCR on an
 	// event's photos, but not deleting them or publishing albums.
 	CapabilityGalleryReview = "gallery:review"
+	// CapabilityGalleryFaceSearch allows enrolling a user's face and
+	// searching an event's gallery photos by an enrolled face
+	// (docs/face-search-plan.md, racetify-app repo). Separate from
+	// CapabilityGalleryReview so it can be granted independently.
+	CapabilityGalleryFaceSearch = "gallery:face_search"
 )
 
 // AllCapabilities is what an internal Staff/Admin/Owner caller effectively
@@ -30,14 +35,16 @@ var AllCapabilities = []string{
 	CapabilityResultsWrite,
 	CapabilityGalleryUpload,
 	CapabilityGalleryReview,
+	CapabilityGalleryFaceSearch,
 }
 
 var validCapabilities = map[string]bool{
-	CapabilityParticipantsRead: true,
-	CapabilityRPCCheckin:       true,
-	CapabilityResultsWrite:     true,
-	CapabilityGalleryUpload:    true,
-	CapabilityGalleryReview:    true,
+	CapabilityParticipantsRead:  true,
+	CapabilityRPCCheckin:        true,
+	CapabilityResultsWrite:      true,
+	CapabilityGalleryUpload:     true,
+	CapabilityGalleryReview:     true,
+	CapabilityGalleryFaceSearch: true,
 }
 
 func IsValidCapability(capability string) bool {

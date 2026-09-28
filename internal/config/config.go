@@ -16,15 +16,17 @@ import (
 // Config holds every tunable the service needs at boot. Fields are grouped
 // by subsystem to keep call sites self-documenting (cfg.HTTP.Port, etc).
 type Config struct {
-	Env      string // "development", "staging", "production"
-	HTTP     HTTPConfig
-	DB       DBConfig
-	Redis    RedisConfig
-	Auth     AuthConfig
-	Google   GoogleConfig
-	CORS     CORSConfig
-	Frontend FrontendConfig
-	Storage  StorageConfig
+	Env       string // "development", "staging", "production"
+	HTTP      HTTPConfig
+	DB        DBConfig
+	Redis     RedisConfig
+	Auth      AuthConfig
+	Google    GoogleConfig
+	CORS      CORSConfig
+	Frontend  FrontendConfig
+	Storage   StorageConfig
+	Qdrant    QdrantConfig
+	FaceEmbed FaceEmbedConfig
 }
 
 type HTTPConfig struct {
@@ -178,6 +180,27 @@ type StorageConfig struct {
 	R2 StorageR2Config
 }
 
+// QdrantConfig configures internal/platform/qdrantstore, the vector store
+// backing face search (docs/face-search-plan.md, racetify-app repo). Qdrant
+// runs self-hosted in docker-compose.yml, unlike FaceEmbedConfig's external
+// Cloud Run service below.
+type QdrantConfig struct {
+	Addr           string
+	APIKey         string
+	CollectionName string
+}
+
+// FaceEmbedConfig points at the face-embedding microservice
+// (face-embed-service/, deployed externally to Google Cloud Run - see
+// docs/face-search-plan.md - not part of docker-compose.yml). RequestTimeout
+// is deliberately generous: a Cloud Run cold start after an idle period can
+// take several seconds, unlike an in-network call to Qdrant.
+type FaceEmbedConfig struct {
+	ServiceURL     string
+	ServiceKey     string
+	RequestTimeout time.Duration
+}
+
 type StorageR2Config struct {
 	AccountID       string
 	Endpoint        string
@@ -266,6 +289,16 @@ func Load() (*Config, error) {
 				Bucket:          getEnv("STORAGE_R2_BUCKET", ""),
 				PublicBaseURL:   getEnv("STORAGE_R2_PUBLIC_BASE_URL", ""),
 			},
+		},
+		Qdrant: QdrantConfig{
+			Addr:           getEnv("QDRANT_ADDR", "localhost:6333"),
+			APIKey:         getEnv("QDRANT_API_KEY", ""),
+			CollectionName: getEnv("QDRANT_FACE_COLLECTION", "face_points"),
+		},
+		FaceEmbed: FaceEmbedConfig{
+			ServiceURL:     getEnv("FACE_EMBED_SERVICE_URL", ""),
+			ServiceKey:     getEnv("FACE_EMBED_SERVICE_KEY", ""),
+			RequestTimeout: getEnvDuration("FACE_EMBED_REQUEST_TIMEOUT", 15*time.Second),
 		},
 	}
 

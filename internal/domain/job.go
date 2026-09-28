@@ -28,4 +28,9 @@ const (
 	JobTypeGeneratorBibBatch  JobType = "generator.bib_batch"
 	JobTypeCertificatesBatch  JobType = "certificates.batch"
 	JobTypeMediaPhotoProcess  JobType = "media.photo_process"
+	// JobTypeMediaFaceDetect detects faces in a batch of newly uploaded
+	// gallery photos and stores their embeddings (docs/face-search-plan.md,
+	// racetify-app repo) - internal/face's detection_job.go. It never
+	// assigns a face_id: matching happens at search time.
+	JobTypeMediaFaceDetect JobType = "media.face_detect"
 )

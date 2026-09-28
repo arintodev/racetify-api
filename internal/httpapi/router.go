@@ -20,6 +20,7 @@ import (
 	"github.com/racetify/racetify-api/internal/certificate"
 	"github.com/racetify/racetify-api/internal/config"
 	"github.com/racetify/racetify-api/internal/event"
+	"github.com/racetify/racetify-api/internal/face"
 	"github.com/racetify/racetify-api/internal/fontlib"
 	"github.com/racetify/racetify-api/internal/gallery"
 	"github.com/racetify/racetify-api/internal/generator"
@@ -68,6 +69,7 @@ type Deps struct {
 	Fonts        *fontlib.Service
 	Gallery      *gallery.Service
 	Watermark    *watermark.Service
+	Face         *face.Service
 	JobQueue     *jobqueue.Queue
 }
 
@@ -103,6 +105,7 @@ func NewRouter(d Deps) http.Handler {
 	fontlib.RegisterRoutes(mux, mw, d.Fonts)
 	gallery.RegisterRoutes(mux, mw, d.Gallery, d.Events)
 	watermark.RegisterRoutes(mux, mw, d.Watermark)
+	face.RegisterRoutes(mux, mw, d.Face, d.Events)
 	jobqueue.RegisterRoutes(mux, mw, d.JobQueue)
 
 	// GET /events/lookup/{slug} cannot live on the mux (it conflicts with

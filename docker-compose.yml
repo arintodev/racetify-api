@@ -59,6 +59,22 @@ services:
       timeout: 5s
       retries: 10
 
+  # Vector store for face search (docs/face-search-plan.md, racetify-app
+  # repo, internal/platform/qdrantstore). Self-hosted, unlike the
+  # face-embedding microservice which runs externally on Google Cloud Run
+  # and has no service here.
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    ports:
+      - "6333:6333"
+    volumes:
+      - racetify_qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/6333' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   # One-shot job: applies migrations (schema + RLS policies + the two
   # generic app/admin roles named by DB_APP_ROLE/DB_ADMIN_ROLE below) as
   # the Postgres bootstrap superuser, then exits. `api` waits for this to
@@ -129,13 +145,27 @@ services:
       STORAGE_R2_ACCESS_KEY_SECRET: ${STORAGE_R2_ACCESS_KEY_SECRET}
       STORAGE_R2_BUCKET: ${STORAGE_R2_BUCKET}
       STORAGE_R2_PUBLIC_BASE_URL: ${STORAGE_R2_PUBLIC_BASE_URL}
+      # Docker-internal hostname, not the host-based localhost:6333 in
+      # .env.example - same "not substituted from .env" reasoning as
+      # REDIS_ADDR above.
+      QDRANT_ADDR: qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY}
+      # face-embed-service is deployed externally to Google Cloud Run (see
+      # docs/face-search-plan.md) - there is no compose service for it, so
+      # this is the only face-embed-related value passed through unchanged
+      # from .env rather than rewritten to an in-network hostname.
+      FACE_EMBED_SERVICE_URL: ${FACE_EMBED_SERVICE_URL}
+      FACE_EMBED_SERVICE_KEY: ${FACE_EMBED_SERVICE_KEY}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      qdrant:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
 
 volumes:
   racetify_postgres_data:
+  racetify_qdrant_data:

@@ -240,6 +240,20 @@ func (s *Service) CompleteUploads(ctx context.Context, tenantID, eventID, albumI
 			// original) until an operator re-runs the job.
 			jobID = ""
 		}
+		// Face detection (docs/face-search-plan.md, internal/face) is a
+		// second, independent job over the same photo batch - not a step
+		// within thumbnail generation, so it gets its own Enqueue call
+		// rather than being folded into enqueueThumbnailJob. Its payload is
+		// the exact same {event_id, album_id, photo_ids} shape
+		// thumbnailPayload uses; built inline here (a map, not a shared
+		// struct) since internal/face owns that struct's real definition
+		// and this package deliberately does not import internal/face (see
+		// this file's own package doc and internal/face's, which import
+		// gallery, not the reverse). Best-effort, same as the thumbnail
+		// enqueue above: a failure here must not fail photo creation.
+		_, _ = s.queue.Enqueue(ctx, tenantID, actorUserID, domain.JobTypeMediaFaceDetect, map[string]any{
+			"event_id": eventID, "album_id": albumID, "photo_ids": createdPhotoIDs,
+		})
 	}
 	return results, jobID, nil
 }
@@ -261,6 +275,29 @@ func (s *Service) ListPhotos(ctx context.Context, tenantID, eventID string, f Ph
 	})
 	return out, err
 }
+
+// GetPhotoByID fetches one photo of the tenant by id alone, with no event
+// join and no tags attached, exposing Repository.GetPhotoByID (the same
+// tenant-only lookup thumbnail_job.go uses) to other bounded contexts -
+// internal/face's detection job needs exactly this, from a job payload that
+// (like thumbnailPayload) carries only a tenant id and photo ids, not the
+// event/album path GetPhoto needs.
+func (s *Service) GetPhotoByID(ctx context.Context, tenantID, id string) (*Photo, error) {
+	var p *Photo
+	err := s.db.WithTenantTx(ctx, tenantID, func(ctx context.Context) error {
+		var err error
+		p, err = s.repo.GetPhotoByID(ctx, tenantID, id)
+		return err
+	})
+	return p, err
+}
+
+// PhotoResponse exposes photoResponse to other bounded contexts -
+// internal/face's search endpoint delegates its actual photo listing to
+// ListPhotos and needs the same PhotoDTO shape (preview/original URLs,
+// tags) that ListPhotos' own handler builds, rather than duplicating that
+// logic.
+func (s *Service) PhotoResponse(p *Photo) (PhotoDTO, error) { return s.photoResponse(p) }
 
 // validatePhotoIDs bounds and checks a bulk action's selection. There is no
 // filter-based Selection (internal/participant's bulk endpoints) here: the

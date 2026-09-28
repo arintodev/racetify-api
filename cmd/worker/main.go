@@ -24,6 +24,7 @@ import (
 	"github.com/racetify/racetify-api/internal/bibprint"
 	"github.com/racetify/racetify-api/internal/certificate"
 	"github.com/racetify/racetify-api/internal/config"
+	"github.com/racetify/racetify-api/internal/face"
 	"github.com/racetify/racetify-api/internal/gallery"
 	"github.com/racetify/racetify-api/internal/jobqueue"
 	"github.com/racetify/racetify-api/internal/platform/logger"
@@ -59,6 +60,10 @@ func main() {
 	// Watermarking and OCR, once built, extend this same job's work rather
 	// than adding a second job type, so this stays a single call.
 	gallery.RegisterJob(dispatcher, a.Handler.Gallery)
+	// Face detection (docs/face-search-plan.md) - a second, independent job
+	// over the same upload batch gallery.RegisterJob's job type covers; see
+	// gallery/photo_service.go's CompleteUploads for the dual-enqueue.
+	face.RegisterJob(dispatcher, a.Handler.Face)
 
 	log.Info("racetify-worker starting", "env", cfg.Env)
 	jobqueue.Run(ctx, a.Handler.JobQueue, dispatcher, log)

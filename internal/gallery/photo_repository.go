@@ -77,6 +77,13 @@ type PhotoFilter struct {
 	BIB string
 	// UploaderID is the photographer.
 	UploaderID string
+	// PhotoIDs restricts the result to exactly these photo ids, in no
+	// particular order (ORDER BY still applies) - used by face search
+	// (internal/face.Service.Search), which resolves a set of matching
+	// photo ids from Qdrant first and then delegates the actual paginated
+	// listing to ListPhotos rather than duplicating its DTO/URL-signing
+	// logic (docs/face-search-plan.md).
+	PhotoIDs []string
 }
 
 // stateCondition mirrors §3.3's rule order against the aggregate columns of
@@ -157,6 +164,9 @@ func (r *Repository) ListPhotos(ctx context.Context, tenantID, eventID string, f
 	}
 	if f.BIB != "" {
 		where = append(where, `EXISTS (SELECT 1 FROM photo_tags pt WHERE pt.photo_id = p.id AND pt.bib_string = `+arg(f.BIB)+`)`)
+	}
+	if len(f.PhotoIDs) > 0 {
+		where = append(where, `p.id = ANY(`+arg(pq.Array(f.PhotoIDs))+`::uuid[])`)
 	}
 	if cond := stateCondition(f.State); cond != "" {
 		where = append(where, cond)

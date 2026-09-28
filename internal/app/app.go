@@ -17,6 +17,7 @@ import (
 	"github.com/racetify/racetify-api/internal/certificate"
 	"github.com/racetify/racetify-api/internal/config"
 	"github.com/racetify/racetify-api/internal/event"
+	"github.com/racetify/racetify-api/internal/face"
 	"github.com/racetify/racetify-api/internal/fontlib"
 	"github.com/racetify/racetify-api/internal/gallery"
 	"github.com/racetify/racetify-api/internal/generator"
@@ -27,6 +28,7 @@ import (
 	"github.com/racetify/racetify-api/internal/participant"
 	"github.com/racetify/racetify-api/internal/platform/database"
 	"github.com/racetify/racetify-api/internal/platform/objectstorage"
+	"github.com/racetify/racetify-api/internal/platform/qdrantstore"
 	"github.com/racetify/racetify-api/internal/platform/ratelimit"
 	"github.com/racetify/racetify-api/internal/platform/rediscli"
 	"github.com/racetify/racetify-api/internal/security"
@@ -133,6 +135,27 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 	watermarkService := watermark.NewService(appDB, watermarkRepo, auditRepo, objectStore, cfg.Storage)
 	galleryService := gallery.NewService(appDB, gallery.NewRepository(appDB), auditRepo, storageService, objectStore, cfg.Storage, jobQueue, watermarkRepo)
 	eventService := event.NewService(appDB, events, auditRepo, authRepo, mail, cfg.Auth, tenants)
+
+	// Face search (docs/face-search-plan.md): qdrantStore talks to the
+	// self-hosted Qdrant instance (docker-compose.yml). Unlike
+	// objectstorage.NewDriver's "fail fast at startup", an unreachable
+	// Qdrant is only logged here, not fatal to boot - Qdrant is a newer,
+	// optional dependency of this one feature, and every other bounded
+	// context (gallery, participants, ...) must keep working with
+	// `go run`/`make` on a host that has not started docker-compose's
+	// qdrant service. The first real face-search or enrollment call will
+	// surface the connection error normally at that point.
+	// embedClient points at the externally-deployed (Google Cloud Run)
+	// face-embedding microservice; a blank cfg.FaceEmbed.ServiceURL is
+	// tolerated the same way (EmbedClient.Configured() gates each call).
+	qdrantStore := qdrantstore.New(qdrantstore.Config{
+		Addr: cfg.Qdrant.Addr, APIKey: cfg.Qdrant.APIKey, CollectionName: cfg.Qdrant.CollectionName,
+	})
+	if err := qdrantStore.EnsureCollection(ctx, face.EmbeddingDimension); err != nil {
+		log.Warn("app: qdrant collection not ready - face search will fail until this is resolved", "error", err)
+	}
+	embedClient := face.NewEmbedClient(cfg.FaceEmbed.ServiceURL, cfg.FaceEmbed.ServiceKey, cfg.FaceEmbed.RequestTimeout)
+	faceService := face.NewService(appDB, face.NewRepository(appDB), auditRepo, storageService, qdrantStore, embedClient, galleryService, jobQueue)
 	bibPrintService := bibprint.NewService(appDB, jobQueue, auditRepo, templateService, participantService, storageService, fontService)
 
 	return &App{
@@ -162,6 +185,7 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 			Fonts:        fontService,
 			Gallery:      galleryService,
 			Watermark:    watermarkService,
+			Face:         faceService,
 			JobQueue:     jobQueue,
 		},
 	}, nil
