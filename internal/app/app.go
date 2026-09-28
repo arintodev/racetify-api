@@ -32,6 +32,7 @@ import (
 	"github.com/racetify/racetify-api/internal/security"
 	"github.com/racetify/racetify-api/internal/storage"
 	"github.com/racetify/racetify-api/internal/tenant"
+	"github.com/racetify/racetify-api/internal/watermark"
 )
 
 // App bundles the router with the resources Build opened, so the caller
@@ -128,7 +129,9 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 	jobQueue := jobqueue.NewQueue(appDB, jobs, redisClient)
 	fontService := fontlib.NewService(appDB, fontlib.NewRepository(appDB, adminDB), auditRepo)
 	certificateService := certificate.NewService(appDB, certificate.NewRepository(appDB), auditRepo, objectStore, cfg.Storage, jobQueue, templateService, storageService, fontService)
-	galleryService := gallery.NewService(appDB, gallery.NewRepository(appDB), auditRepo, storageService, objectStore, cfg.Storage)
+	watermarkRepo := watermark.NewRepository(appDB)
+	watermarkService := watermark.NewService(appDB, watermarkRepo, auditRepo, objectStore, cfg.Storage)
+	galleryService := gallery.NewService(appDB, gallery.NewRepository(appDB), auditRepo, storageService, objectStore, cfg.Storage, jobQueue, watermarkRepo)
 	eventService := event.NewService(appDB, events, auditRepo, authRepo, mail, cfg.Auth, tenants)
 	bibPrintService := bibprint.NewService(appDB, jobQueue, auditRepo, templateService, participantService, storageService, fontService)
 
@@ -158,6 +161,7 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 			BibPrint:     bibPrintService,
 			Fonts:        fontService,
 			Gallery:      galleryService,
+			Watermark:    watermarkService,
 			JobQueue:     jobQueue,
 		},
 	}, nil

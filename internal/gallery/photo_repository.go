@@ -119,7 +119,7 @@ const photoFrom = `
 const photoColumns = `p.id, p.tenant_id, p.album_id, p.original_filename, p.original_size, p.size, p.width, p.height,
 	p.ocr_status, p.ocr_error, p.created_by, p.created_at, p.updated_at,
 	u.first_name, u.last_name, u.email,
-	oo.bucket, oo.object_key, tn.bucket, tn.object_key`
+	p.original_storage_id, oo.bucket, oo.object_key, tn.bucket, tn.object_key`
 
 func scanPhoto(row dbutil.RowScanner) (*Photo, error) {
 	p := &Photo{}
@@ -128,7 +128,7 @@ func scanPhoto(row dbutil.RowScanner) (*Photo, error) {
 	err := row.Scan(&p.ID, &p.TenantID, &p.AlbumID, &p.OriginalFilename, &p.OriginalSize, &p.Size, &p.Width, &p.Height,
 		&p.OCRStatus, &p.OCRError, &p.CreatedBy, &p.CreatedAt, &p.UpdatedAt,
 		&first, &last, &p.UploaderEmail,
-		&p.OriginalBucket, &p.OriginalKey, &thumbBucket, &thumbKey)
+		&p.OriginalStorageID, &p.OriginalBucket, &p.OriginalKey, &thumbBucket, &thumbKey)
 	if err != nil {
 		return nil, dbutil.MapNotFound(err)
 	}
@@ -194,6 +194,85 @@ func (r *Repository) ListPhotos(ctx context.Context, tenantID, eventID string, f
 		return pagination.Page[Photo]{}, err
 	}
 	return pagination.Page[Photo]{Items: photos, NextCursor: next}, nil
+}
+
+// GetPhoto fetches one photo of the event, with its tags, for the tag CRUD
+// endpoints (they need the current ocr_status to decide whether to flip it,
+// and the fresh tag list to answer with).
+func (r *Repository) GetPhoto(ctx context.Context, tenantID, eventID, id string) (*Photo, error) {
+	row := r.db.Q(ctx).QueryRowContext(ctx,
+		`SELECT `+photoColumns+photoFrom+` WHERE a.tenant_id = $1 AND a.event_id = $2 AND p.id = $3`,
+		tenantID, eventID, id)
+	p, err := scanPhoto(row)
+	if err != nil {
+		return nil, err
+	}
+	photos := []Photo{*p}
+	if err := r.attachTags(ctx, tenantID, photos); err != nil {
+		return nil, err
+	}
+	return &photos[0], nil
+}
+
+// GetPhotoByID fetches one photo of the tenant by id alone, with no event
+// join and no tags attached. The thumbnail job only ever has a tenant id
+// and a photo id (from its job payload) - not the event/album path the
+// HTTP-facing GetPhoto needs to stay inside one event's URL space.
+func (r *Repository) GetPhotoByID(ctx context.Context, tenantID, id string) (*Photo, error) {
+	row := r.db.Q(ctx).QueryRowContext(ctx,
+		`SELECT `+photoColumns+photoFrom+` WHERE p.tenant_id = $1 AND p.id = $2`, tenantID, id)
+	return scanPhoto(row)
+}
+
+// UpdatePhotoThumbnail sets thumbnail_storage_id once the thumbnail job has
+// stored the resized image. Called at most once per photo in the normal
+// case; safe to call again (e.g. a retried job) since it just overwrites
+// the same column.
+func (r *Repository) UpdatePhotoThumbnail(ctx context.Context, tenantID, photoID, thumbnailStorageID string) error {
+	res, err := r.db.Q(ctx).ExecContext(ctx,
+		`UPDATE photos SET thumbnail_storage_id = $3 WHERE tenant_id = $1 AND id = $2`,
+		tenantID, photoID, thumbnailStorageID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return dbutil.MapNotFound(sql.ErrNoRows)
+	}
+	return nil
+}
+
+// MovePhotos reassigns the given photos (of this event only - the join on
+// albums keeps a stray id from another event or tenant from moving
+// anything) to targetAlbumID, and reports how many actually moved.
+func (r *Repository) MovePhotos(ctx context.Context, tenantID, eventID string, ids []string, targetAlbumID string) (int64, error) {
+	res, err := r.db.Q(ctx).ExecContext(ctx, `
+		UPDATE photos p SET album_id = $4
+		FROM albums a
+		WHERE p.album_id = a.id AND a.tenant_id = $1 AND a.event_id = $2 AND p.id = ANY($3::uuid[])`,
+		tenantID, eventID, pq.Array(ids), targetAlbumID)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// DeletePhotos hard-deletes the given photos of this event (their tags go
+// with them, ON DELETE CASCADE from migrations/0009_media_gallery), and
+// reports how many actually existed.
+func (r *Repository) DeletePhotos(ctx context.Context, tenantID, eventID string, ids []string) (int64, error) {
+	res, err := r.db.Q(ctx).ExecContext(ctx, `
+		DELETE FROM photos p
+		USING albums a
+		WHERE p.album_id = a.id AND a.tenant_id = $1 AND a.event_id = $2 AND p.id = ANY($3::uuid[])`,
+		tenantID, eventID, pq.Array(ids))
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // attachTags loads the tags of the given photos in one query.

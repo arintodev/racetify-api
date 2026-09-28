@@ -137,29 +137,31 @@ type CompleteResult struct {
 	Reason    string
 }
 
-// CompleteUploads turns uploaded objects into photos (ocr_status=pending).
-// Completing the same object again returns the photo it already made. The
-// thumbnail and OCR job is not queued yet; photos stay pending.
-func (s *Service) CompleteUploads(ctx context.Context, tenantID, eventID, albumID, actorUserID string, items []CompleteItem) ([]CompleteResult, error) {
+// CompleteUploads turns uploaded objects into photos (ocr_status=pending),
+// and queues one media.photo_process job (thumbnail generation only - see
+// docs/media-gallery-integration.md) covering every photo actually created
+// by this call. Completing the same object again returns the photo it
+// already made, without queuing a second job for it.
+func (s *Service) CompleteUploads(ctx context.Context, tenantID, eventID, albumID, actorUserID string, items []CompleteItem) ([]CompleteResult, string, error) {
 	if len(items) == 0 {
-		return nil, invalid("items", "items is required.")
+		return nil, "", invalid("items", "items is required.")
 	}
 	if len(items) > MaxBatch {
-		return nil, invalid("items", fmt.Sprintf("at most %d items per request.", MaxBatch))
+		return nil, "", invalid("items", fmt.Sprintf("at most %d items per request.", MaxBatch))
 	}
 	if !isUUID(albumID) {
-		return nil, domain.ErrNotFound
+		return nil, "", domain.ErrNotFound
 	}
 	for _, it := range items {
 		if !isUUID(it.StorageID) {
-			return nil, invalid("items", "storage_id is not valid.")
+			return nil, "", invalid("items", "storage_id is not valid.")
 		}
 	}
 	if err := s.db.WithTenantTx(ctx, tenantID, func(ctx context.Context) error {
 		_, err := s.repo.GetAlbum(ctx, tenantID, eventID, albumID)
 		return err
 	}); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	// Confirm what reached storage first: with the r2 driver this is a
@@ -173,7 +175,7 @@ func (s *Service) CompleteUploads(ctx context.Context, tenantID, eventID, albumI
 		case errors.Is(err, domain.ErrNotFound):
 			results[i].Status, results[i].Reason = CompleteRejected, "not an uploaded file of this workspace"
 		case err != nil:
-			return nil, err
+			return nil, "", err
 		case obj.Bucket != storage.ObjectBucketPrivate || !strings.HasPrefix(obj.ObjectKey, albumPrefix(albumID)):
 			results[i].Status, results[i].Reason = CompleteRejected, "not an upload of this album"
 		case obj.Status != storage.ObjectStatusStored:
@@ -188,6 +190,7 @@ func (s *Service) CompleteUploads(ctx context.Context, tenantID, eventID, albumI
 	}
 
 	created := 0
+	createdPhotoIDs := make([]string, 0, len(items))
 	err := s.db.WithTenantTx(ctx, tenantID, func(ctx context.Context) error {
 		now := time.Now().UTC()
 		for i, it := range items {
@@ -206,6 +209,7 @@ func (s *Service) CompleteUploads(ctx context.Context, tenantID, eventID, albumI
 			if inserted {
 				results[i].PhotoID, results[i].Status = p.ID, CompleteCreated
 				created++
+				createdPhotoIDs = append(createdPhotoIDs, p.ID)
 				continue
 			}
 			// Already completed before: hand back the photo it made.
@@ -221,9 +225,23 @@ func (s *Service) CompleteUploads(ctx context.Context, tenantID, eventID, albumI
 			map[string]any{"album_id": albumID, "event_id": eventID, "photos": created})
 	})
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return results, nil
+
+	var jobID string
+	if len(createdPhotoIDs) > 0 && s.queue != nil {
+		jobID, err = s.enqueueThumbnailJob(ctx, tenantID, eventID, albumID, actorUserID, createdPhotoIDs)
+		if err != nil {
+			// The photos are safely created; failing to queue thumbnailing
+			// must not turn this call into an error the client retries
+			// (which would just create duplicate photos - InsertPhoto is
+			// keyed on the storage object, not on "was a job queued").
+			// They stay previewable at full size (PhotoURLs falls back to
+			// original) until an operator re-runs the job.
+			jobID = ""
+		}
+	}
+	return results, jobID, nil
 }
 
 // ListPhotos returns one page of an event's photos. A non-empty
@@ -242,6 +260,81 @@ func (s *Service) ListPhotos(ctx context.Context, tenantID, eventID string, f Ph
 		return err
 	})
 	return out, err
+}
+
+// validatePhotoIDs bounds and checks a bulk action's selection. There is no
+// filter-based Selection (internal/participant's bulk endpoints) here: the
+// gallery's grid selects photos by hand, a page at a time, so a plain id
+// list is all the client ever has to send.
+func validatePhotoIDs(ids []string) error {
+	if len(ids) == 0 {
+		return invalid("ids", "ids is required.")
+	}
+	if len(ids) > MaxBatch {
+		return invalid("ids", fmt.Sprintf("at most %d photos per request.", MaxBatch))
+	}
+	for _, id := range ids {
+		if !isUUID(id) {
+			return invalid("ids", "ids must be valid.")
+		}
+	}
+	return nil
+}
+
+// BulkMovePhotos moves the given photos of this event into another album of
+// the same event, and reports how many actually moved. Moving into an album
+// of another event (or one that does not exist) is a 404, the same as any
+// other album lookup in this package.
+func (s *Service) BulkMovePhotos(ctx context.Context, tenantID, eventID, actorUserID string, ids []string, targetAlbumID string) (int64, error) {
+	if err := validatePhotoIDs(ids); err != nil {
+		return 0, err
+	}
+	if !isUUID(targetAlbumID) {
+		return 0, domain.ErrNotFound
+	}
+	var moved int64
+	err := s.db.WithTenantTx(ctx, tenantID, func(ctx context.Context) error {
+		if _, err := s.repo.GetAlbum(ctx, tenantID, eventID, targetAlbumID); err != nil {
+			return err
+		}
+		var err error
+		if moved, err = s.repo.MovePhotos(ctx, tenantID, eventID, ids, targetAlbumID); err != nil {
+			return err
+		}
+		if moved == 0 {
+			return nil
+		}
+		return s.recordAudit(ctx, tenantID, actorUserID, audit.ActionPhotoMoved,
+			map[string]any{"event_id": eventID, "album_id": targetAlbumID, "photos": moved})
+	})
+	if err != nil {
+		return 0, err
+	}
+	return moved, nil
+}
+
+// BulkDeletePhotos hard-deletes the given photos of this event, and reports
+// how many actually existed.
+func (s *Service) BulkDeletePhotos(ctx context.Context, tenantID, eventID, actorUserID string, ids []string) (int64, error) {
+	if err := validatePhotoIDs(ids); err != nil {
+		return 0, err
+	}
+	var deleted int64
+	err := s.db.WithTenantTx(ctx, tenantID, func(ctx context.Context) error {
+		var err error
+		if deleted, err = s.repo.DeletePhotos(ctx, tenantID, eventID, ids); err != nil {
+			return err
+		}
+		if deleted == 0 {
+			return nil
+		}
+		return s.recordAudit(ctx, tenantID, actorUserID, audit.ActionPhotoDeleted,
+			map[string]any{"event_id": eventID, "photos": deleted})
+	})
+	if err != nil {
+		return 0, err
+	}
+	return deleted, nil
 }
 
 // PhotoURLs returns where to fetch a photo. Preview is the thumbnail when

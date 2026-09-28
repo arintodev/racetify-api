@@ -113,7 +113,7 @@ func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
 			Width: it.Width, Height: it.Height,
 		}
 	}
-	results, err := h.svc.CompleteUploads(r.Context(), tenantID, r.PathValue("id"), r.PathValue("aid"), userID, items)
+	results, jobID, err := h.svc.CompleteUploads(r.Context(), tenantID, r.PathValue("id"), r.PathValue("aid"), userID, items)
 	if err != nil {
 		fail(w, err)
 		return
@@ -122,7 +122,11 @@ func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
 	for i, res := range results {
 		out[i] = CompleteItemDTO{StorageID: res.StorageID, PhotoID: res.PhotoID, Status: res.Status, Reason: res.Reason}
 	}
-	respond.JSON(w, http.StatusCreated, CompleteDTO{Items: out})
+	dto := CompleteDTO{Items: out}
+	if jobID != "" {
+		dto.JobID = &jobID
+	}
+	respond.JSON(w, http.StatusCreated, dto)
 }
 
 // ==================== photos ====================
@@ -153,6 +157,98 @@ func (h *Handler) ListPhotos(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	respond.JSON(w, http.StatusOK, respond.ListResponseDTO[PhotoDTO]{Items: out, NextCursor: page.NextCursor})
+}
+
+// ==================== tags ====================
+
+// AddTag handles POST /events/{id}/photos/{pid}/tags.
+func (h *Handler) AddTag(w http.ResponseWriter, r *http.Request) {
+	tenantID, userID, _ := actor(r)
+	var req addTagRequest
+	if !respond.DecodeJSON(w, r, &req) {
+		return
+	}
+	p, err := h.svc.AddTag(r.Context(), tenantID, r.PathValue("id"), r.PathValue("pid"), userID, req.BIB)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	dto, err := h.svc.photoResponse(p)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	respond.JSON(w, http.StatusCreated, dto)
+}
+
+// UpdateTag handles PATCH /events/{id}/photos/{pid}/tags/{tid}: both
+// "confirm" (bib sent back unchanged) and "correct" (bib changed) an OCR or
+// manual tag, per gallery-store.ts's confirmTag/updateTag.
+func (h *Handler) UpdateTag(w http.ResponseWriter, r *http.Request) {
+	tenantID, userID, _ := actor(r)
+	var req updateTagRequest
+	if !respond.DecodeJSON(w, r, &req) {
+		return
+	}
+	p, err := h.svc.UpdateTag(r.Context(), tenantID, r.PathValue("id"), r.PathValue("pid"), r.PathValue("tid"), userID, req.BIB)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	dto, err := h.svc.photoResponse(p)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, dto)
+}
+
+// DeleteTag handles DELETE /events/{id}/photos/{pid}/tags/{tid}.
+func (h *Handler) DeleteTag(w http.ResponseWriter, r *http.Request) {
+	tenantID, userID, _ := actor(r)
+	p, err := h.svc.DeleteTag(r.Context(), tenantID, r.PathValue("id"), r.PathValue("pid"), r.PathValue("tid"), userID)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	dto, err := h.svc.photoResponse(p)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, dto)
+}
+
+// ==================== bulk actions ====================
+
+// BulkMovePhotos handles POST /events/{id}/photos/bulk-move.
+func (h *Handler) BulkMovePhotos(w http.ResponseWriter, r *http.Request) {
+	tenantID, userID, _ := actor(r)
+	var req bulkMoveRequest
+	if !respond.DecodeJSON(w, r, &req) {
+		return
+	}
+	n, err := h.svc.BulkMovePhotos(r.Context(), tenantID, r.PathValue("id"), userID, req.IDs, req.AlbumID)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, map[string]int64{"moved": n})
+}
+
+// BulkDeletePhotos handles POST /events/{id}/photos/bulk-delete.
+func (h *Handler) BulkDeletePhotos(w http.ResponseWriter, r *http.Request) {
+	tenantID, userID, _ := actor(r)
+	var req bulkDeleteRequest
+	if !respond.DecodeJSON(w, r, &req) {
+		return
+	}
+	n, err := h.svc.BulkDeletePhotos(r.Context(), tenantID, r.PathValue("id"), userID, req.IDs)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, map[string]int64{"deleted": n})
 }
 
 // ==================== albums ====================

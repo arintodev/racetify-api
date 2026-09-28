@@ -58,8 +58,12 @@ type CompleteItemDTO struct {
 	Reason    string `json:"reason,omitempty"`
 }
 
-// CompleteDTO is the answer to /complete. job_id is null until the
-// thumbnail and OCR job exists; then it is what /jobs/{id} polls.
+// CompleteDTO is the answer to /complete. job_id names the
+// media.photo_process job queued for the photos this call actually created
+// (thumbnail generation only - see docs/media-gallery-integration.md); it
+// is what GET /api/v1/jobs/{id} polls. It is null when the call created no
+// new photos (every item was "exists"/"rejected"), or if queuing failed
+// after the photos were already safely stored.
 type CompleteDTO struct {
 	Items []CompleteItemDTO `json:"items"`
 	JobID *string           `json:"job_id"`
@@ -125,6 +129,27 @@ func (s *Service) photoResponse(p *Photo) (PhotoDTO, error) {
 		UploadedAt: p.CreatedAt, OCRStatus: p.OCRStatus, OCRError: p.OCRError, HasThumbnail: p.HasThumbnail(),
 		PreviewURL: preview, OriginalURL: original, Tags: tags,
 	}, nil
+}
+
+// ==================== tags ====================
+
+type addTagRequest struct {
+	BIB string `json:"bib"`
+}
+
+type updateTagRequest struct {
+	BIB string `json:"bib"`
+}
+
+// ==================== bulk actions ====================
+
+type bulkMoveRequest struct {
+	IDs     []string `json:"ids"`
+	AlbumID string   `json:"album_id"`
+}
+
+type bulkDeleteRequest struct {
+	IDs []string `json:"ids"`
 }
 
 type createAlbumRequest struct {

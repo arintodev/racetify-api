@@ -48,6 +48,10 @@ func conflict(code, field, message string) *Error {
 
 const maxAlbumNameLen = 100
 
+// maxBIBLen bounds a manually typed or corrected tag (§5: BIBs are short
+// alphanumeric strings, e.g. "A-1024").
+const maxBIBLen = 20
+
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // isUUID guards ids that come from a client before they reach a uuid column,
@@ -110,6 +114,10 @@ type Photo struct {
 	OriginalKey    string
 	ThumbBucket    *string
 	ThumbKey       *string
+	// OriginalStorageID is the objects.id of the original file (the
+	// thumbnail job reads it via storage.Service.ReadObject, which takes an
+	// object id rather than a bucket/key pair).
+	OriginalStorageID string
 
 	Tags []Tag
 }

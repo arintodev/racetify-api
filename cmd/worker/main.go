@@ -24,6 +24,7 @@ import (
 	"github.com/racetify/racetify-api/internal/bibprint"
 	"github.com/racetify/racetify-api/internal/certificate"
 	"github.com/racetify/racetify-api/internal/config"
+	"github.com/racetify/racetify-api/internal/gallery"
 	"github.com/racetify/racetify-api/internal/jobqueue"
 	"github.com/racetify/racetify-api/internal/platform/logger"
 )
@@ -49,10 +50,15 @@ func main() {
 	// Phase 1 modules register their job handlers here as they land:
 	//   participantimport.RegisterJob(dispatcher, a.Handler.Participant)
 	//   generator.RegisterJob(dispatcher, a.Handler.Generator)
-	//   gallery.RegisterJobs(dispatcher, a.Handler.Gallery)
 
 	bibprint.RegisterJob(dispatcher, a.Handler.BibPrint)
 	certificate.RegisterJob(dispatcher, a.Handler.Certificates)
+	// Singular RegisterJob, matching bibprint/certificate above: gallery
+	// registers exactly one job type (media.photo_process, thumbnail
+	// generation only for now - see thumbnail_job.go's doc comment).
+	// Watermarking and OCR, once built, extend this same job's work rather
+	// than adding a second job type, so this stays a single call.
+	gallery.RegisterJob(dispatcher, a.Handler.Gallery)
 
 	log.Info("racetify-worker starting", "env", cfg.Env)
 	jobqueue.Run(ctx, a.Handler.JobQueue, dispatcher, log)

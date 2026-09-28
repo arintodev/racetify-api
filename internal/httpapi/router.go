@@ -38,6 +38,7 @@ import (
 	"github.com/racetify/racetify-api/internal/security"
 	"github.com/racetify/racetify-api/internal/storage"
 	"github.com/racetify/racetify-api/internal/tenant"
+	"github.com/racetify/racetify-api/internal/watermark"
 )
 
 // Deps is every dependency the router needs. cmd/api/main.go builds one of
@@ -66,6 +67,7 @@ type Deps struct {
 	BibPrint     *bibprint.Service
 	Fonts        *fontlib.Service
 	Gallery      *gallery.Service
+	Watermark    *watermark.Service
 	JobQueue     *jobqueue.Queue
 }
 
@@ -100,6 +102,7 @@ func NewRouter(d Deps) http.Handler {
 	bibprint.RegisterRoutes(mux, mw, d.BibPrint)
 	fontlib.RegisterRoutes(mux, mw, d.Fonts)
 	gallery.RegisterRoutes(mux, mw, d.Gallery, d.Events)
+	watermark.RegisterRoutes(mux, mw, d.Watermark)
 	jobqueue.RegisterRoutes(mux, mw, d.JobQueue)
 
 	// GET /events/lookup/{slug} cannot live on the mux (it conflicts with

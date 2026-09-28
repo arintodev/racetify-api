@@ -80,7 +80,12 @@ const (
 	ActionCertificatesPublished  = "certificate.published"
 
 	ActionPhotoUploaded     = "photo.uploaded"
+	ActionPhotoMoved        = "photo.moved"
+	ActionPhotoTagAdded     = "photo_tag.added"
 	ActionPhotoTagCorrected = "photo_tag.corrected"
+	ActionPhotoTagRemoved   = "photo_tag.removed"
+
+	ActionWatermarksReplaced = "watermark.replaced"
 
 	// Event-scoped crew/volunteer access (docs/event-crew-access-plan.md).
 	ActionEventAssignmentCreated  = "event_assignment.created"

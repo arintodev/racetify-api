@@ -9,11 +9,13 @@ import (
 	"github.com/racetify/racetify-api/internal/audit"
 	"github.com/racetify/racetify-api/internal/config"
 	"github.com/racetify/racetify-api/internal/domain"
+	"github.com/racetify/racetify-api/internal/jobqueue"
 	"github.com/racetify/racetify-api/internal/platform/database"
 	"github.com/racetify/racetify-api/internal/platform/objectstorage"
 	"github.com/racetify/racetify-api/internal/platform/rbac"
 	"github.com/racetify/racetify-api/internal/security"
 	"github.com/racetify/racetify-api/internal/storage"
+	"github.com/racetify/racetify-api/internal/watermark"
 )
 
 // Service implements the gallery use cases. Every mutating method takes the
@@ -26,10 +28,19 @@ type Service struct {
 	storage *storage.Service
 	store   objectstorage.Driver
 	cfg     config.StorageConfig
+	// queue enqueues media.photo_process jobs from CompleteUploads. Nil is
+	// tolerated (e.g. a caller that only needs read paths, like some tests)
+	// - CompleteUploads just skips enqueuing and answers job_id: null, the
+	// same as before this job existed.
+	queue *jobqueue.Queue
+	// watermarks reads an event's configured watermark layers for the
+	// thumbnail job (thumbnail_job.go's applyWatermarks). Nil is tolerated
+	// the same way queue is: the job just composites nothing.
+	watermarks *watermark.Repository
 }
 
-func NewService(db *database.DB, repo *Repository, audit *audit.Repository, objects *storage.Service, store objectstorage.Driver, cfg config.StorageConfig) *Service {
-	return &Service{db: db, repo: repo, audit: audit, storage: objects, store: store, cfg: cfg}
+func NewService(db *database.DB, repo *Repository, audit *audit.Repository, objects *storage.Service, store objectstorage.Driver, cfg config.StorageConfig, queue *jobqueue.Queue, watermarks *watermark.Repository) *Service {
+	return &Service{db: db, repo: repo, audit: audit, storage: objects, store: store, cfg: cfg, queue: queue, watermarks: watermarks}
 }
 
 func (s *Service) recordAudit(ctx context.Context, tenantID, actorUserID, action string, metadata map[string]any) error {

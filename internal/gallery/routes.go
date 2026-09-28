@@ -36,6 +36,15 @@ func RegisterRoutes(mux *http.ServeMux, mw routing.Middlewares, svc *Service, ga
 	mux.Handle("POST /api/v1/events/{id}/albums/{aid}/photos/upload-urls", routing.Chain(h.UploadURLs, upload, mw.RequireUserAuth))
 	mux.Handle("POST /api/v1/events/{id}/albums/{aid}/photos/complete", routing.Chain(h.Complete, upload, mw.RequireUserAuth))
 
+	// Tagging and bulk actions admit tenant staff or a crew member holding
+	// gallery:review - reviewing (not just uploading) is what these change.
+	review := gate.RequireEventAccess(CapabilityReview)
+	mux.Handle("POST /api/v1/events/{id}/photos/{pid}/tags", routing.Chain(h.AddTag, review, mw.RequireUserAuth))
+	mux.Handle("PATCH /api/v1/events/{id}/photos/{pid}/tags/{tid}", routing.Chain(h.UpdateTag, review, mw.RequireUserAuth))
+	mux.Handle("DELETE /api/v1/events/{id}/photos/{pid}/tags/{tid}", routing.Chain(h.DeleteTag, review, mw.RequireUserAuth))
+	mux.Handle("POST /api/v1/events/{id}/photos/bulk-move", routing.Chain(h.BulkMovePhotos, review, mw.RequireUserAuth))
+	mux.Handle("POST /api/v1/events/{id}/photos/bulk-delete", routing.Chain(h.BulkDeletePhotos, review, mw.RequireUserAuth))
+
 	mux.Handle("POST /api/v1/events/{id}/albums", routing.Chain(h.CreateAlbum, mw.RequireAnyRole, mw.RequireTenantForUser, mw.RequireUserAuth))
 	mux.Handle("PATCH /api/v1/events/{id}/albums/{aid}", routing.Chain(h.UpdateAlbum, mw.RequireAnyRole, mw.RequireTenantForUser, mw.RequireUserAuth))
 	mux.Handle("DELETE /api/v1/events/{id}/albums/{aid}", routing.Chain(h.DeleteAlbum, mw.RequireAdminRole, mw.RequireTenantForUser, mw.RequireUserAuth))
