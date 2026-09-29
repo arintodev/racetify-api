@@ -118,6 +118,19 @@ func (s *Service) ListAlbums(ctx context.Context, tenantID, eventID string) ([]A
 	return out, err
 }
 
+// ListPublicAlbums exposes Repository.ListPublicAlbums to internal/portal -
+// the Runner Portal must never see a draft album, so it calls this instead
+// of ListAlbums.
+func (s *Service) ListPublicAlbums(ctx context.Context, tenantID, eventID string) ([]Album, error) {
+	var out []Album
+	err := s.db.WithTenantTx(ctx, tenantID, func(ctx context.Context) error {
+		var err error
+		out, err = s.repo.ListPublicAlbums(ctx, tenantID, eventID)
+		return err
+	})
+	return out, err
+}
+
 func (s *Service) GetAlbum(ctx context.Context, tenantID, eventID, id string) (*Album, error) {
 	if !isUUID(id) {
 		return nil, domain.ErrNotFound

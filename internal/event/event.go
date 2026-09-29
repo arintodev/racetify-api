@@ -46,7 +46,11 @@ type Event struct {
 	// storage providers.
 	LogoStorageID      *string
 	ThumbnailStorageID *string
-	Status             EventStatus
+	// PrimaryColor is a hex color (e.g. "#c2410c") the public Runner Portal
+	// microsite themes itself with - null means the portal falls back to a
+	// default color. Organizer-set, no validation beyond what Service does.
+	PrimaryColor *string
+	Status       EventStatus
 	CreatedBy          string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time

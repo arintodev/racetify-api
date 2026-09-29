@@ -25,6 +25,7 @@ type Middlewares struct {
 	LoginRateLimit       func(http.Handler) http.Handler
 	SignupRateLimit      func(http.Handler) http.Handler
 	TokenRateLimit       func(http.Handler) http.Handler
+	PortalRateLimit      func(http.Handler) http.Handler
 }
 
 // Chain applies middleware in the order listed - the first argument after

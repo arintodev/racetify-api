@@ -101,6 +101,7 @@ type updateEventRequest struct {
 	EndDate            *string `json:"end_date"`
 	LogoStorageID      *string `json:"logo_storage_id"`
 	ThumbnailStorageID *string `json:"thumbnail_storage_id"`
+	PrimaryColor       *string `json:"primary_color"`
 }
 
 // Update handles PATCH /api/v1/events/{id}. Requires RequireTenantForUser
@@ -118,6 +119,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	patch := EventPatch{
 		Name: req.Name, Slug: req.Slug, Venue: req.Venue,
 		LogoStorageID: req.LogoStorageID, ThumbnailStorageID: req.ThumbnailStorageID,
+		PrimaryColor: req.PrimaryColor,
 	}
 	if req.StartDate != nil {
 		d, ok := parseOptionalDate(w, "start_date", req.StartDate)

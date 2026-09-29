@@ -377,6 +377,22 @@ func (s *Service) BulkDeletePhotos(ctx context.Context, tenantID, eventID, actor
 // PhotoURLs returns where to fetch a photo. Preview is the thumbnail when
 // the job made one, else the original, so the grid shows something as soon
 // as the upload is complete. Original is always the stored 2048 px file.
+// PreviewURL returns only the watermarked thumbnail's URL, "" while none
+// exists yet (still processing) - never the private original. internal/
+// portal's public photo listing uses this instead of PhotoURLs, which
+// exists to build the private OriginalURL too, appropriate only for a
+// staff-gated route.
+func (s *Service) PreviewURL(p *Photo) (string, error) {
+	if p.ThumbBucket == nil || p.ThumbKey == nil {
+		return "", nil
+	}
+	ticket, err := objectstorage.GetURL(s.store, objectstorage.Bucket(*p.ThumbBucket), p.TenantID, *p.ThumbKey, s.cfg.DownloadTTL)
+	if err != nil {
+		return "", err
+	}
+	return ticket.URL, nil
+}
+
 func (s *Service) PhotoURLs(p *Photo) (preview, original string, err error) {
 	ticket, err := objectstorage.GetURL(s.store, objectstorage.Bucket(p.OriginalBucket), p.TenantID, p.OriginalKey, s.cfg.DownloadTTL)
 	if err != nil {

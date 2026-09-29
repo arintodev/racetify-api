@@ -31,6 +31,7 @@ import (
 	"github.com/racetify/racetify-api/internal/platform/qdrantstore"
 	"github.com/racetify/racetify-api/internal/platform/ratelimit"
 	"github.com/racetify/racetify-api/internal/platform/rediscli"
+	"github.com/racetify/racetify-api/internal/portal"
 	"github.com/racetify/racetify-api/internal/security"
 	"github.com/racetify/racetify-api/internal/storage"
 	"github.com/racetify/racetify-api/internal/tenant"
@@ -130,11 +131,13 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 	templateService := generator.NewService(appDB, generator.NewRepository(appDB), auditRepo, objectStore, cfg.Storage)
 	jobQueue := jobqueue.NewQueue(appDB, jobs, redisClient)
 	fontService := fontlib.NewService(appDB, fontlib.NewRepository(appDB, adminDB), auditRepo)
-	certificateService := certificate.NewService(appDB, certificate.NewRepository(appDB), auditRepo, objectStore, cfg.Storage, jobQueue, templateService, storageService, fontService)
+	certificateRepo := certificate.NewRepository(appDB)
+	certificateService := certificate.NewService(appDB, certificateRepo, auditRepo, objectStore, cfg.Storage, jobQueue, templateService, storageService, fontService)
 	watermarkRepo := watermark.NewRepository(appDB)
 	watermarkService := watermark.NewService(appDB, watermarkRepo, auditRepo, objectStore, cfg.Storage)
 	galleryService := gallery.NewService(appDB, gallery.NewRepository(appDB), auditRepo, storageService, objectStore, cfg.Storage, jobQueue, watermarkRepo)
 	eventService := event.NewService(appDB, events, auditRepo, authRepo, mail, cfg.Auth, tenants)
+	portalService := portal.NewService(appDB, eventService, portal.NewRepository(appDB), certificateRepo, certificateService, galleryService)
 
 	// Face search (docs/face-search-plan.md): qdrantStore talks to the
 	// self-hosted Qdrant instance (docker-compose.yml). Unlike
@@ -187,6 +190,7 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 			Watermark:    watermarkService,
 			Face:         faceService,
 			JobQueue:     jobQueue,
+			Portal:       portalService,
 		},
 	}, nil
 }

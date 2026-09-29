@@ -73,6 +73,11 @@ func NewService(
 // reqctx}, never sideways on another Phase 0/Phase 1 bounded context.
 var slugSanitizer = regexp.MustCompile(`[^a-z0-9]+`)
 
+// hexColorPattern accepts a 3 or 6-digit CSS hex color with its leading #,
+// e.g. "#c2410c" or "#fff" - what the public Runner Portal (internal/
+// portal) themes its page with (Event.PrimaryColor).
+var hexColorPattern = regexp.MustCompile(`^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$`)
+
 func Slugify(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	s = slugSanitizer.ReplaceAllString(s, "-")
@@ -137,6 +142,14 @@ func (s *Service) GetEvent(ctx context.Context, tenantID, id string) (*Event, er
 	return ev, err
 }
 
+// GetPublishedEventBySlug is a thin passthrough to Repository's
+// BYPASSRLS lookup, letting internal/portal resolve a public URL's event
+// slug without importing internal/event/repository.go's internals or
+// opening a tenant transaction it can't yet have a tenantID for.
+func (s *Service) GetPublishedEventBySlug(ctx context.Context, slug string) (*Event, error) {
+	return s.repo.GetPublishedEventBySlug(ctx, slug)
+}
+
 // ListEvents returns one keyset-paginated page of tenantID's events - see
 // internal/platform/pagination for why keyset rather than LIMIT/OFFSET.
 func (s *Service) ListEvents(ctx context.Context, tenantID string, page pagination.PageParams) (pagination.Page[Event], error) {
@@ -161,6 +174,7 @@ type EventPatch struct {
 	EndDate            *time.Time
 	LogoStorageID      *string
 	ThumbnailStorageID *string
+	PrimaryColor       *string
 }
 
 func (s *Service) UpdateEvent(ctx context.Context, tenantID, actorUserID string, actorRole rbac.MemberRole, id string, patch EventPatch) (*Event, error) {
@@ -201,6 +215,17 @@ func (s *Service) UpdateEvent(ctx context.Context, tenantID, actorUserID string,
 		}
 		if patch.ThumbnailStorageID != nil {
 			current.ThumbnailStorageID = patch.ThumbnailStorageID
+		}
+		if patch.PrimaryColor != nil {
+			color := strings.TrimSpace(*patch.PrimaryColor)
+			if color != "" && !hexColorPattern.MatchString(color) {
+				return fmt.Errorf("service: %w: primary_color must be a hex color like #2563eb", domain.ErrInvalidState)
+			}
+			if color == "" {
+				current.PrimaryColor = nil
+			} else {
+				current.PrimaryColor = &color
+			}
 		}
 		if err := s.repo.UpdateEvent(ctx, current); err != nil {
 			return err

@@ -78,6 +78,28 @@ func (r *Repository) ListAlbums(ctx context.Context, tenantID, eventID string) (
 	return out, rows.Err()
 }
 
+// ListPublicAlbums returns every published (is_public) album of an event,
+// oldest first - the Runner Portal's album browse fallback
+// (docs/media-gallery-ux.md §5 "Publikasi album (is_public)").
+func (r *Repository) ListPublicAlbums(ctx context.Context, tenantID, eventID string) ([]Album, error) {
+	rows, err := r.db.Q(ctx).QueryContext(ctx,
+		`SELECT `+albumColumns+` FROM albums a WHERE a.tenant_id = $1 AND a.event_id = $2 AND a.is_public = true ORDER BY a.created_at, a.id`,
+		tenantID, eventID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Album
+	for rows.Next() {
+		a, err := scanAlbum(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *a)
+	}
+	return out, rows.Err()
+}
+
 func (r *Repository) UpdateAlbum(ctx context.Context, a *Album) error {
 	res, err := r.db.Q(ctx).ExecContext(ctx, `
 		UPDATE albums SET name = $4, description = $5, is_public = $6

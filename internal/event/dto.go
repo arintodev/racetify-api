@@ -17,6 +17,7 @@ type EventDTO struct {
 	EndDate            *string `json:"end_date,omitempty"`
 	LogoStorageID      *string `json:"logo_storage_id,omitempty"`
 	ThumbnailStorageID *string `json:"thumbnail_storage_id,omitempty"`
+	PrimaryColor       *string `json:"primary_color,omitempty"`
 	Status             string  `json:"status"`
 	CreatedAt          string  `json:"created_at"`
 }
@@ -31,6 +32,7 @@ func eventResponse(e *Event) EventDTO {
 		EndDate:            formatDateOnly(e.EndDate),
 		LogoStorageID:      e.LogoStorageID,
 		ThumbnailStorageID: e.ThumbnailStorageID,
+		PrimaryColor:       e.PrimaryColor,
 		Status:             string(e.Status),
 		CreatedAt:          e.CreatedAt.Format(time.RFC3339),
 	}

@@ -36,6 +36,7 @@ import (
 	"github.com/racetify/racetify-api/internal/platform/originpolicy"
 	"github.com/racetify/racetify-api/internal/platform/ratelimit"
 	"github.com/racetify/racetify-api/internal/platform/rediscli"
+	"github.com/racetify/racetify-api/internal/portal"
 	"github.com/racetify/racetify-api/internal/security"
 	"github.com/racetify/racetify-api/internal/storage"
 	"github.com/racetify/racetify-api/internal/tenant"
@@ -71,6 +72,7 @@ type Deps struct {
 	Watermark    *watermark.Service
 	Face         *face.Service
 	JobQueue     *jobqueue.Queue
+	Portal       *portal.Service
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -86,6 +88,10 @@ func NewRouter(d Deps) http.Handler {
 		LoginRateLimit:       middleware.RateLimit(d.RateLimiter, "login", 10, time.Minute, middleware.ClientIP),
 		SignupRateLimit:      middleware.RateLimit(d.RateLimiter, "signup", 20, time.Minute, middleware.ClientIP),
 		TokenRateLimit:       middleware.RateLimit(d.RateLimiter, "oauth_token_ip", 30, time.Minute, middleware.ClientIP),
+		// Generous enough for a runner retrying a mistyped BIB/name a few
+		// times, tight enough to blunt scripted enumeration of the search
+		// endpoint (docs/phase1-api-plan.md §5's flagged open decision).
+		PortalRateLimit: middleware.RateLimit(d.RateLimiter, "portal", 60, time.Minute, middleware.ClientIP),
 	}
 
 	mux := http.NewServeMux()
@@ -107,6 +113,7 @@ func NewRouter(d Deps) http.Handler {
 	watermark.RegisterRoutes(mux, mw, d.Watermark)
 	face.RegisterRoutes(mux, mw, d.Face, d.Events)
 	jobqueue.RegisterRoutes(mux, mw, d.JobQueue)
+	portal.RegisterRoutes(mux, mw, d.Portal)
 
 	// GET /events/lookup/{slug} cannot live on the mux (it conflicts with
 	// /events/{id}/<name>), so it is dispatched ahead of it.

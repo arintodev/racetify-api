@@ -33,14 +33,14 @@ func NewRepository(db, adminDB *database.DB) *Repository {
 
 // ==================== events ====================
 
-const eventColumns = `id, tenant_id, name, slug, venue, start_date, end_date, logo_storage_id, thumbnail_storage_id, status, created_by, created_at, updated_at`
+const eventColumns = `id, tenant_id, name, slug, venue, start_date, end_date, logo_storage_id, thumbnail_storage_id, primary_color, status, created_by, created_at, updated_at`
 
 func (r *Repository) CreateEvent(ctx context.Context, e *Event) error {
 	_, err := r.db.Q(ctx).ExecContext(ctx, `
-		INSERT INTO events (id, tenant_id, name, slug, venue, start_date, end_date, logo_storage_id, thumbnail_storage_id, status, created_by, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+		INSERT INTO events (id, tenant_id, name, slug, venue, start_date, end_date, logo_storage_id, thumbnail_storage_id, primary_color, status, created_by, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
 		e.ID, e.TenantID, e.Name, e.Slug, e.Venue, e.StartDate, e.EndDate,
-		e.LogoStorageID, e.ThumbnailStorageID, e.Status, e.CreatedBy, e.CreatedAt, e.UpdatedAt,
+		e.LogoStorageID, e.ThumbnailStorageID, e.PrimaryColor, e.Status, e.CreatedBy, e.CreatedAt, e.UpdatedAt,
 	)
 	if dbutil.IsUniqueViolation(err) {
 		return domain.ErrAlreadyExists
@@ -52,6 +52,20 @@ func (r *Repository) CreateEvent(ctx context.Context, e *Event) error {
 func (r *Repository) GetEventBySlug(ctx context.Context, tenantID, slug string) (*Event, error) {
 	row := r.db.Q(ctx).QueryRowContext(ctx,
 		`SELECT `+eventColumns+` FROM events WHERE tenant_id = $1 AND slug = $2`, tenantID, slug)
+	return scanEvent(row)
+}
+
+// GetPublishedEventBySlug resolves a globally-unique event slug
+// (migrations/0021_public_event_fields.up.sql) to the event, for the
+// unauthenticated Runner Portal (internal/portal) - runs on the BYPASSRLS
+// admin connection, same justification as TenantIDForEvent
+// (assignment_repository.go): no tenant context can exist yet at this
+// point, since the caller has no session at all. Only ever returns an
+// event whose status is 'published', so a draft/archived event stays
+// invisible to the public regardless of whether its slug is known.
+func (r *Repository) GetPublishedEventBySlug(ctx context.Context, slug string) (*Event, error) {
+	row := r.adminDB.DB.QueryRowContext(ctx,
+		`SELECT `+eventColumns+` FROM events WHERE slug = $1 AND status = $2`, slug, EventStatusPublished)
 	return scanEvent(row)
 }
 
@@ -111,10 +125,10 @@ func (r *Repository) ListEvents(ctx context.Context, tenantID string, page pagin
 func (r *Repository) UpdateEvent(ctx context.Context, e *Event) error {
 	res, err := r.db.Q(ctx).ExecContext(ctx, `
 		UPDATE events SET name = $3, slug = $4, venue = $5, start_date = $6, end_date = $7,
-			logo_storage_id = $8, thumbnail_storage_id = $9
+			logo_storage_id = $8, thumbnail_storage_id = $9, primary_color = $10
 		WHERE tenant_id = $1 AND id = $2`,
 		e.TenantID, e.ID, e.Name, e.Slug, e.Venue, e.StartDate, e.EndDate,
-		e.LogoStorageID, e.ThumbnailStorageID,
+		e.LogoStorageID, e.ThumbnailStorageID, e.PrimaryColor,
 	)
 	if err != nil {
 		if dbutil.IsUniqueViolation(err) {
@@ -145,7 +159,7 @@ func scanEvent(row dbutil.RowScanner) (*Event, error) {
 	e := &Event{}
 	err := row.Scan(
 		&e.ID, &e.TenantID, &e.Name, &e.Slug, &e.Venue, &e.StartDate, &e.EndDate,
-		&e.LogoStorageID, &e.ThumbnailStorageID, &e.Status, &e.CreatedBy, &e.CreatedAt, &e.UpdatedAt,
+		&e.LogoStorageID, &e.ThumbnailStorageID, &e.PrimaryColor, &e.Status, &e.CreatedBy, &e.CreatedAt, &e.UpdatedAt,
 	)
 	if err != nil {
 		return nil, dbutil.MapNotFound(err)

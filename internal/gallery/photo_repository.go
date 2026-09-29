@@ -84,6 +84,11 @@ type PhotoFilter struct {
 	// listing to ListPhotos rather than duplicating its DTO/URL-signing
 	// logic (docs/face-search-plan.md).
 	PhotoIDs []string
+	// PublicOnly restricts the result to photos in an is_public album -
+	// set by internal/portal (the Runner Portal) on every call, since a
+	// runner with no session must never see a draft album's photos
+	// regardless of which other filter narrowed the query.
+	PublicOnly bool
 }
 
 // stateCondition mirrors §3.3's rule order against the aggregate columns of
@@ -167,6 +172,9 @@ func (r *Repository) ListPhotos(ctx context.Context, tenantID, eventID string, f
 	}
 	if len(f.PhotoIDs) > 0 {
 		where = append(where, `p.id = ANY(`+arg(pq.Array(f.PhotoIDs))+`::uuid[])`)
+	}
+	if f.PublicOnly {
+		where = append(where, `a.is_public = true`)
 	}
 	if cond := stateCondition(f.State); cond != "" {
 		where = append(where, cond)
