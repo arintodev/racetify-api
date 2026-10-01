@@ -101,13 +101,18 @@ func (s *Service) detectPhoto(ctx context.Context, tenantID, eventID, photoID st
 	if err != nil {
 		return 0, err
 	}
-	data, err := s.storage.ReadObject(ctx, tenantID, photo.OriginalStorageID)
+	// The face-detector service fetches the image itself, so it needs a
+	// URL, not bytes (embedclient.go's own doc comment) - the original
+	// already lives in the private bucket as a tracked object, so this is
+	// just a short-lived signed download URL, the same one PhotoURLs/
+	// PreviewURL build for an authorized viewer.
+	ticket, err := s.storage.RequestDownload(ctx, tenantID, photo.OriginalKey, photo.OriginalBucket)
 	if err != nil {
-		return 0, fmt.Errorf("read original: %w", err)
+		return 0, fmt.Errorf("sign original url: %w", err)
 	}
-	detected, err := s.embed.DetectAndEmbed(ctx, data, photo.OriginalFilename)
+	detected, err := s.embed.DetectAndEmbed(ctx, photoID, ticket.URL)
 	if err != nil {
-		return 0, fmt.Errorf("detect-embed: %w", err)
+		return 0, fmt.Errorf("detect/single: %w", err)
 	}
 	if len(detected) == 0 {
 		return 0, nil
@@ -118,9 +123,10 @@ func (s *Service) detectPhoto(ctx context.Context, tenantID, eventID, photoID st
 		for _, f := range detected {
 			pointID := security.MustNewUUIDv4()
 			confidence := f.Confidence
+			box := boxFraction(f.BBoxPixel, photo.Width, photo.Height)
 			d := &Detection{
 				ID: security.MustNewUUIDv4(), TenantID: tenantID, PhotoID: photoID,
-				BoxX: f.Box.X, BoxY: f.Box.Y, BoxW: f.Box.W, BoxH: f.Box.H,
+				BoxX: box.X, BoxY: box.Y, BoxW: box.W, BoxH: box.H,
 				ConfidenceScore: &confidence, QdrantPointID: pointID, DetectedAt: now,
 			}
 			if err := s.repo.InsertDetection(ctx, d); err != nil {

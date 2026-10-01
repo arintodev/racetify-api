@@ -27,6 +27,7 @@ type Config struct {
 	Storage   StorageConfig
 	Qdrant    QdrantConfig
 	FaceEmbed FaceEmbedConfig
+	BibOCR    BibOCRConfig
 }
 
 type HTTPConfig struct {
@@ -201,6 +202,22 @@ type FaceEmbedConfig struct {
 	RequestTimeout time.Duration
 }
 
+// BibOCRConfig points at the "photo bib service" - the externally-deployed
+// BIB-detection (OCR) microservice (docs/media-gallery-integration.md, not
+// part of docker-compose.yml, same externally-deployed shape as
+// FaceEmbedConfig above). It exposes POST {ServiceURL}/process-url, which
+// takes a downloadable URL for the photo (not the image bytes themselves -
+// internal/gallery.OCRClient builds one via objectstorage.GetURL) and
+// answers with every BIB text reading it found. A blank ServiceURL is
+// tolerated the same way (OCRClient.Configured() gates each call) -
+// internal/gallery.Service.RunPhotoProcess still makes thumbnails even
+// when this is unset, it just skips the OCR step.
+type BibOCRConfig struct {
+	ServiceURL     string
+	ServiceKey     string
+	RequestTimeout time.Duration
+}
+
 type StorageR2Config struct {
 	AccountID       string
 	Endpoint        string
@@ -299,6 +316,11 @@ func Load() (*Config, error) {
 			ServiceURL:     getEnv("FACE_EMBED_SERVICE_URL", ""),
 			ServiceKey:     getEnv("FACE_EMBED_SERVICE_KEY", ""),
 			RequestTimeout: getEnvDuration("FACE_EMBED_REQUEST_TIMEOUT", 15*time.Second),
+		},
+		BibOCR: BibOCRConfig{
+			ServiceURL:     getEnv("PHOTO_BIB_SERVICE_URL", ""),
+			ServiceKey:     getEnv("PHOTO_BIB_SERVICE_KEY", ""),
+			RequestTimeout: getEnvDuration("PHOTO_BIB_REQUEST_TIMEOUT", 15*time.Second),
 		},
 	}
 

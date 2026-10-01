@@ -19,6 +19,12 @@ const (
 	ScopeRegistrationsRead = "registrations:read"
 	ScopeTimingWrite       = "timing:write"
 	ScopeTenantRead        = "tenant:read"
+	// ScopeFaceWrite/ScopeFaceRead gate the tenant face-enrollment M2M
+	// endpoints (docs/face-tenant-enrollment-plan.md, internal/face):
+	// enroll/drop a tenant's own ref-based face identities, and
+	// list/search them, respectively.
+	ScopeFaceWrite = "face:write"
+	ScopeFaceRead  = "face:read"
 )
 
 var validScopes = map[string]bool{
@@ -27,6 +33,8 @@ var validScopes = map[string]bool{
 	ScopeRegistrationsRead: true,
 	ScopeTimingWrite:       true,
 	ScopeTenantRead:        true,
+	ScopeFaceWrite:         true,
+	ScopeFaceRead:          true,
 }
 
 func IsValidScope(scope string) bool {

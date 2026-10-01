@@ -1,6 +1,7 @@
 package objectstorage
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -27,17 +28,22 @@ const r2PublicURLFallbackTTL = 7 * 24 * time.Hour
 // native SigV4 presigned URLs, issued straight at the bucket - or any
 // S3-compatible bucket, including real AWS S3, since R2's API is
 // S3-compatible and Config.R2.Endpoint can point anywhere. Unlike the
-// "local" driver (Store, local_driver.go), this server never sees the
-// object bytes: no app-level AES-256-GCM encryption is applied (R2's own
-// at-rest encryption is relied on instead), and a successful upload has to
-// be confirmed explicitly via ConfirmUpload rather than observed by a PUT
-// handler here. See objectstorage.go's package doc for the full
-// local-vs-r2 contrast, and for the "not exercised against a live R2
-// bucket" caveat (this package's tests, r2_driver_test.go, run it against
-// fake s3PresignAPI/s3HeadAPI stand-ins instead).
+// "local" driver (Store, local_driver.go), this server never sees a real
+// client upload's bytes: no app-level AES-256-GCM encryption is applied
+// (R2's own at-rest encryption is relied on instead), and a successful
+// upload has to be confirmed explicitly via ConfirmUpload rather than
+// observed by a PUT handler here. The one exception is PutDirect/
+// DeleteDirect (DirectWriter) below, for a server-generated blob that was
+// never a client upload to begin with - those do use this driver's own S3
+// client to touch bytes directly, deliberately outside the presign flow
+// this doc comment otherwise describes. See objectstorage.go's package doc
+// for the full local-vs-r2 contrast, and for the "not exercised against a
+// live R2 bucket" caveat (this package's tests, r2_driver_test.go, run it
+// against fake s3PresignAPI/s3HeadAPI stand-ins instead).
 type r2Driver struct {
 	presign       s3PresignAPI
 	head          s3HeadAPI
+	write         s3PutDeleteAPI
 	bucket        string
 	publicBaseURL string
 }
@@ -55,6 +61,16 @@ type s3PresignAPI interface {
 // satisfies this with zero extra code.
 type s3HeadAPI interface {
 	HeadObject(ctx context.Context, in *s3.HeadObjectInput, opts ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
+}
+
+// s3PutDeleteAPI is the subset of *s3.Client PutDirect/DeleteDirect call -
+// *s3.Client satisfies this with zero extra code, same shape as
+// s3HeadAPI. Kept as its own interface (rather than folded into
+// s3HeadAPI) so r2_driver_test.go's narrow HeadObject-only fakes keep
+// satisfying s3HeadAPI unchanged.
+type s3PutDeleteAPI interface {
+	PutObject(ctx context.Context, in *s3.PutObjectInput, opts ...func(*s3.Options)) (*s3.PutObjectOutput, error)
+	DeleteObject(ctx context.Context, in *s3.DeleteObjectInput, opts ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
 }
 
 func newR2Driver(cfg Config) (*r2Driver, error) {
@@ -82,6 +98,7 @@ func newR2Driver(cfg Config) (*r2Driver, error) {
 	return &r2Driver{
 		presign:       s3.NewPresignClient(client),
 		head:          client,
+		write:         client,
 		bucket:        cfg.R2.Bucket,
 		publicBaseURL: strings.TrimRight(cfg.R2.PublicBaseURL, "/"),
 	}, nil
@@ -192,6 +209,44 @@ func (d *r2Driver) ConfirmUpload(bucket Bucket, tenantID, key string) (int64, er
 		return 0, nil
 	}
 	return *out.ContentLength, nil
+}
+
+// PutDirect writes data straight to the R2 bucket using this driver's own
+// credentials, via *s3.Client.PutObject - unlike every other write path in
+// this file (PresignUpload), there is no browser round-trip at all.
+// DirectWriter's contract (objectstorage.go's doc comment): used only for
+// a short-lived server-generated blob, never for a real client upload.
+func (d *r2Driver) PutDirect(bucket Bucket, tenantID, key string, data []byte) error {
+	objKey, err := objectKey(bucket, tenantID, key)
+	if err != nil {
+		return err
+	}
+	_, err = d.write.PutObject(context.Background(), &s3.PutObjectInput{
+		Bucket: aws.String(d.bucket),
+		Key:    aws.String(objKey),
+		Body:   bytes.NewReader(data),
+	})
+	if err != nil {
+		return fmt.Errorf("objectstorage: r2 PutObject: %w", err)
+	}
+	return nil
+}
+
+// DeleteDirect removes an object PutDirect wrote. Safe to call even if it
+// was never written or was already removed.
+func (d *r2Driver) DeleteDirect(bucket Bucket, tenantID, key string) error {
+	objKey, err := objectKey(bucket, tenantID, key)
+	if err != nil {
+		return err
+	}
+	_, err = d.write.DeleteObject(context.Background(), &s3.DeleteObjectInput{
+		Bucket: aws.String(d.bucket),
+		Key:    aws.String(objKey),
+	})
+	if err != nil && !isNoSuchKey(err) {
+		return fmt.Errorf("objectstorage: r2 DeleteObject: %w", err)
+	}
+	return nil
 }
 
 // isNoSuchKey recognizes a missing-object response several ways:

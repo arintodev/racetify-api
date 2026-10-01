@@ -105,6 +105,51 @@ func (db *DB) WithTx(ctx context.Context, fn func(ctx context.Context) error) er
 	return nil
 }
 
+// WithUserTx is WithTenantTx's personal-resource counterpart: it sets
+// `app.user_id` (instead of `app.tenant_id`) for the lifetime of the
+// transaction, for a resource that belongs to one Racetify account rather
+// than any tenant workspace - today, internal/storage's personal objects
+// (migrations/0023_object_storage_personal.up.sql), backing internal/
+// face's self-enroll temp image upload. Every RLS policy with a
+// personal-resource branch (`tenant_id IS NULL AND created_by =
+// current_setting('app.user_id', true)`) relies on this the same way
+// WithTenantTx's callers rely on `app.tenant_id`.
+func (db *DB) WithUserTx(ctx context.Context, userID string, fn func(ctx context.Context) error) error {
+	if userID == "" {
+		return fmt.Errorf("database: WithUserTx called with empty userID")
+	}
+
+	tx, err := db.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("database: begin tx: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.user_id', $1, true)`, userID); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("database: set user context: %w", err)
+	}
+
+	txCtx := context.WithValue(ctx, txKey, tx)
+
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+			panic(p)
+		}
+	}()
+
+	if err := fn(txCtx); err != nil {
+		if rbErr := tx.Rollback(); rbErr != nil {
+			return fmt.Errorf("database: rollback after error (%v): %w", err, rbErr)
+		}
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("database: commit: %w", err)
+	}
+	return nil
+}
+
 // WithTenantTx opens a transaction and, before running fn, sets the
 // Postgres session variable `app.tenant_id` for the lifetime of that
 // transaction via `SET LOCAL`. Every RLS policy in migrations/0002_rls.up.sql

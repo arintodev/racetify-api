@@ -40,7 +40,7 @@ services:
       POSTGRES_PASSWORD: ${DB_MIGRATOR_PASSWORD}
       POSTGRES_DB: ${DB_NAME}
     ports:
-      - "5432:5432"
+      - "5432:5434"
     volumes:
       - racetify_postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -52,7 +52,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "6379:6380"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -66,7 +66,7 @@ services:
   qdrant:
     image: qdrant/qdrant:v1.12.4
     ports:
-      - "6333:6333"
+      - "6333:6334"
     volumes:
       - racetify_qdrant_data:/qdrant/storage
     healthcheck:
@@ -156,6 +156,11 @@ services:
       # from .env rather than rewritten to an in-network hostname.
       FACE_EMBED_SERVICE_URL: ${FACE_EMBED_SERVICE_URL}
       FACE_EMBED_SERVICE_KEY: ${FACE_EMBED_SERVICE_KEY}
+      # Same shape as FACE_EMBED_SERVICE_URL/KEY above - the photo bib
+      # service (BIB-detection/OCR, docs/media-gallery-integration.md) is
+      # also deployed externally, no compose service for it either.
+      PHOTO_BIB_SERVICE_URL: ${PHOTO_BIB_SERVICE_URL}
+      PHOTO_BIB_SERVICE_KEY: ${PHOTO_BIB_SERVICE_KEY}
     depends_on:
       postgres:
         condition: service_healthy

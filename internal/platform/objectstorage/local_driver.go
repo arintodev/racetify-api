@@ -116,3 +116,29 @@ func (s *Store) Get(bucket Bucket, tenantID, key string) ([]byte, error) {
 	}
 	return decryptGCM(s.aeadKey, ciphertext)
 }
+
+// Delete removes an object's on-disk bytes. Safe to call even if the key
+// was never written or was already removed.
+func (s *Store) Delete(bucket Bucket, tenantID, key string) error {
+	path, err := s.objectPath(bucket, tenantID, key)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("objectstorage: delete object: %w", err)
+	}
+	return nil
+}
+
+// PutDirect/DeleteDirect satisfy DirectWriter trivially: "local" already
+// writes/removes bytes directly via Put/Delete, so there is no separate
+// direct-vs-presigned distinction for this driver the way there is for
+// r2Driver.
+func (s *Store) PutDirect(bucket Bucket, tenantID, key string, data []byte) error {
+	_, _, err := s.Put(bucket, tenantID, key, data)
+	return err
+}
+
+func (s *Store) DeleteDirect(bucket Bucket, tenantID, key string) error {
+	return s.Delete(bucket, tenantID, key)
+}

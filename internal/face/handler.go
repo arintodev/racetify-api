@@ -37,43 +37,52 @@ func fail(w http.ResponseWriter, err error) {
 	respond.FromServiceError(w, err)
 }
 
-func actor(r *http.Request) (tenantID, userID string) {
-	tenantID, _ = reqctx.TenantID(r.Context())
-	userID, _ = reqctx.UserID(r.Context())
-	return tenantID, userID
-}
-
-// Enroll handles POST /events/{id}/users/{uid}/face-embeddings.
-func (h *Handler) Enroll(w http.ResponseWriter, r *http.Request) {
-	tenantID, actorUserID := actor(r)
-	userID := r.PathValue("uid")
-	if !isUUID(userID) {
-		respond.ErrorWithField(w, http.StatusBadRequest, "invalid_request", "uid is not valid.", "uid")
-		return
-	}
-
+// readEnrollImage parses a multipart enrollment request's shared fields:
+// the image file (required) and the "consent" flag. Used by both Enroll
+// and EnrollByRef, which otherwise only differ in whose face is being
+// enrolled and what audit metadata that implies.
+func readEnrollImage(w http.ResponseWriter, r *http.Request) (data []byte, consent bool, ok bool) {
 	if err := r.ParseMultipartForm(maxEnrollImageBytes); err != nil {
 		respond.Error(w, http.StatusBadRequest, "invalid_request", "Request must be a multipart form with an image file.")
-		return
+		return nil, false, false
 	}
-	consent := r.FormValue("consent") == "true"
-	file, header, err := r.FormFile("image")
+	consent = r.FormValue("consent") == "true"
+	file, _, err := r.FormFile("image")
 	if err != nil {
 		respond.ErrorWithField(w, http.StatusBadRequest, "invalid_request", "image is required.", "image")
-		return
+		return nil, false, false
 	}
 	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, maxEnrollImageBytes+1))
+	data, err = io.ReadAll(io.LimitReader(file, maxEnrollImageBytes+1))
 	if err != nil {
 		respond.Error(w, http.StatusBadRequest, "invalid_request", "Could not read the uploaded image.")
-		return
+		return nil, false, false
 	}
 	if len(data) > maxEnrollImageBytes {
 		respond.ErrorWithField(w, http.StatusBadRequest, "invalid_request", "image exceeds 10 MB.", "image")
+		return nil, false, false
+	}
+	return data, consent, true
+}
+
+// ==================== self-enroll (Racetify user) ====================
+
+// Enroll handles POST /users/{uid}/face-enrollment. uid must be the
+// caller's own id - there is no tenant/event gate on this route any more
+// to borrow authorization from (docs/face-tenant-enrollment-plan.md §5),
+// so self-ness is enforced here instead.
+func (h *Handler) Enroll(w http.ResponseWriter, r *http.Request) {
+	actorUserID, _ := reqctx.UserID(r.Context())
+	uid := r.PathValue("uid")
+	if uid != actorUserID {
+		respond.Error(w, http.StatusForbidden, "forbidden", "You can only enroll your own face.")
 		return
 	}
-
-	face, err := h.svc.Enroll(r.Context(), tenantID, r.PathValue("id"), userID, actorUserID, data, header.Filename, consent)
+	data, consent, ok := readEnrollImage(w, r)
+	if !ok {
+		return
+	}
+	face, err := h.svc.Enroll(r.Context(), uid, actorUserID, data, consent)
 	if err != nil {
 		fail(w, err)
 		return
@@ -81,43 +90,97 @@ func (h *Handler) Enroll(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusCreated, faceResponse(face))
 }
 
-// ListEmbeddings handles GET /events/{id}/users/{uid}/face-embeddings.
+// ListEmbeddings handles GET /users/{uid}/face-enrollment.
 func (h *Handler) ListEmbeddings(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := actor(r)
-	userID := r.PathValue("uid")
-	if !isUUID(userID) {
-		respond.ErrorWithField(w, http.StatusBadRequest, "invalid_request", "uid is not valid.", "uid")
+	actorUserID, _ := reqctx.UserID(r.Context())
+	uid := r.PathValue("uid")
+	if uid != actorUserID {
+		respond.Error(w, http.StatusForbidden, "forbidden", "You can only view your own face.")
 		return
 	}
-	face, embeddings, err := h.svc.ListEmbeddings(r.Context(), tenantID, r.PathValue("id"), userID)
+	face, embeddings, err := h.svc.ListEmbeddings(r.Context(), uid)
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	dto := ListEmbeddingsDTO{Embeddings: make([]EmbeddingDTO, len(embeddings))}
-	if face != nil {
-		f := faceResponse(face)
-		dto.Face = &f
-	}
-	for i := range embeddings {
-		dto.Embeddings[i] = embeddingResponse(&embeddings[i])
-	}
-	respond.JSON(w, http.StatusOK, dto)
+	respond.JSON(w, http.StatusOK, listEmbeddingsResponse(face, embeddings))
 }
 
-// RevokeConsent handles DELETE /events/{id}/faces/{fid}/consent.
-func (h *Handler) RevokeConsent(w http.ResponseWriter, r *http.Request) {
-	tenantID, actorUserID := actor(r)
-	if err := h.svc.RevokeConsent(r.Context(), tenantID, r.PathValue("fid"), actorUserID); err != nil {
+// DropFace handles DELETE /faces/{fid} for the self-enroll path.
+func (h *Handler) DropFace(w http.ResponseWriter, r *http.Request) {
+	actorUserID, _ := reqctx.UserID(r.Context())
+	if err := h.svc.DropOwnFace(r.Context(), actorUserID, r.PathValue("fid")); err != nil {
 		fail(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// Search handles POST /events/{id}/faces/search.
+// ==================== tenant M2M ====================
+
+// EnrollByRef handles POST /clients/face-enrollment. ref_id and
+// consent_reference are additional multipart form fields on top of what
+// readEnrollImage already reads.
+func (h *Handler) EnrollByRef(w http.ResponseWriter, r *http.Request) {
+	tenantID, _ := reqctx.TenantID(r.Context())
+	actorClientID, _ := reqctx.M2MClientID(r.Context())
+
+	data, consent, ok := readEnrollImage(w, r)
+	if !ok {
+		return
+	}
+	refID := r.FormValue("ref_id")
+	if refID == "" {
+		respond.ErrorWithField(w, http.StatusBadRequest, "invalid_request", "ref_id is required.", "ref_id")
+		return
+	}
+	consentReference := r.FormValue("consent_reference")
+
+	face, err := h.svc.EnrollByRef(r.Context(), tenantID, refID, actorClientID, data, consent, consentReference)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	respond.JSON(w, http.StatusCreated, faceResponse(face))
+}
+
+// ListEmbeddingsByRef handles GET /clients/face-enrollment?ref_id=...
+func (h *Handler) ListEmbeddingsByRef(w http.ResponseWriter, r *http.Request) {
+	tenantID, _ := reqctx.TenantID(r.Context())
+	refID := r.URL.Query().Get("ref_id")
+	if refID == "" {
+		respond.ErrorWithField(w, http.StatusBadRequest, "invalid_request", "ref_id is required.", "ref_id")
+		return
+	}
+	face, embeddings, err := h.svc.ListEmbeddingsByRef(r.Context(), tenantID, refID)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, listEmbeddingsResponse(face, embeddings))
+}
+
+// DropFaceByRef handles DELETE /clients/faces/{fid}.
+func (h *Handler) DropFaceByRef(w http.ResponseWriter, r *http.Request) {
+	tenantID, _ := reqctx.TenantID(r.Context())
+	actorClientID, _ := reqctx.M2MClientID(r.Context())
+	if err := h.svc.DropFaceByRef(r.Context(), tenantID, actorClientID, r.PathValue("fid")); err != nil {
+		fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ==================== search (shared) ====================
+
+// Search handles both POST /events/{id}/faces/search (user-session) and
+// POST /clients/events/{id}/faces/search (M2M) - tenantID comes from
+// reqctx regardless of which route's middleware set it
+// (event.RequireEventAccess for the former, middleware.RequireTenantForM2M
+// for the latter), so one handler serves both (docs/face-tenant-
+// enrollment-plan.md §5).
 func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := actor(r)
+	tenantID, _ := reqctx.TenantID(r.Context())
 	var req searchRequest
 	if !respond.DecodeJSON(w, r, &req) {
 		return

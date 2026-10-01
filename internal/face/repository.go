@@ -10,77 +10,123 @@ import (
 
 // Repository reads and writes faces, face_embeddings and
 // photo_face_detections. Every method runs on the connection in ctx, which
-// the service opens as a tenant-scoped transaction (WithTenantTx), the same
-// shape gallery.Repository uses.
+// the service opens as either db.WithTx (self-enroll, no tenant) or
+// db.WithTenantTx (tenant M2M) - see docs/face-tenant-enrollment-plan.md
+// §2.3 for why faces/face_embeddings' RLS policy makes both shapes safe.
 type Repository struct {
 	db *database.DB
 }
 
 func NewRepository(db *database.DB) *Repository { return &Repository{db: db} }
 
-const faceColumns = `id, tenant_id, event_id, user_id, embedding_count, consented_at, consent_revoked_at, created_at, updated_at`
+const faceColumns = `id, tenant_id, user_id, ref_id, embedding_count, consented_at, created_at, updated_at`
 
 func scanFace(row dbutil.RowScanner) (*Face, error) {
 	f := &Face{}
-	var revokedAt sql.NullTime
-	err := row.Scan(&f.ID, &f.TenantID, &f.EventID, &f.UserID, &f.EmbeddingCount,
-		&f.ConsentedAt, &revokedAt, &f.CreatedAt, &f.UpdatedAt)
+	var tenantID, userID, refID sql.NullString
+	err := row.Scan(&f.ID, &tenantID, &userID, &refID, &f.EmbeddingCount,
+		&f.ConsentedAt, &f.CreatedAt, &f.UpdatedAt)
 	if err != nil {
 		return nil, dbutil.MapNotFound(err)
 	}
-	if revokedAt.Valid {
-		f.ConsentRevokedAt = &revokedAt.Time
+	if tenantID.Valid {
+		f.TenantID = &tenantID.String
+	}
+	if userID.Valid {
+		f.UserID = &userID.String
+	}
+	if refID.Valid {
+		f.RefID = &refID.String
 	}
 	return f, nil
 }
 
-// GetFaceByUser fetches a user's enrolled face for an event, if one exists.
-func (r *Repository) GetFaceByUser(ctx context.Context, tenantID, eventID, userID string) (*Face, error) {
+// GetFaceByUser fetches a Racetify account's own global face, if one
+// exists. Relies on the caller running inside db.WithTx (no tenant
+// context) so the RLS policy's tenant_id IS NULL branch is what actually
+// scopes this to global rows only.
+func (r *Repository) GetFaceByUser(ctx context.Context, userID string) (*Face, error) {
 	row := r.db.Q(ctx).QueryRowContext(ctx,
-		`SELECT `+faceColumns+` FROM faces WHERE tenant_id = $1 AND event_id = $2 AND user_id = $3`,
-		tenantID, eventID, userID)
+		`SELECT `+faceColumns+` FROM faces WHERE tenant_id IS NULL AND user_id = $1`, userID)
 	return scanFace(row)
 }
 
-// GetFace fetches one face of the tenant by id alone.
-func (r *Repository) GetFace(ctx context.Context, tenantID, id string) (*Face, error) {
+// GetFaceByRef fetches a tenant's ref-based face, if one exists.
+func (r *Repository) GetFaceByRef(ctx context.Context, tenantID, refID string) (*Face, error) {
 	row := r.db.Q(ctx).QueryRowContext(ctx,
-		`SELECT `+faceColumns+` FROM faces WHERE tenant_id = $1 AND id = $2`, tenantID, id)
+		`SELECT `+faceColumns+` FROM faces WHERE tenant_id = $1 AND ref_id = $2`, tenantID, refID)
 	return scanFace(row)
 }
 
-// InsertFace creates a new face row. Called only when GetFaceByUser found
-// none - the (tenant_id, event_id, user_id) unique index is the ultimate
-// guard against a race creating two.
+// GetFace fetches one face by id alone - no ownership/tenant filter of
+// its own. Callers that need to restrict who a face_id resolves to (Drop)
+// must apply that check themselves against the returned Face; Search
+// intentionally does not, relying only on whatever the active
+// transaction's RLS scope already let through (docs/face-tenant-
+// enrollment-plan.md §3.3).
+func (r *Repository) GetFace(ctx context.Context, id string) (*Face, error) {
+	row := r.db.Q(ctx).QueryRowContext(ctx, `SELECT `+faceColumns+` FROM faces WHERE id = $1`, id)
+	return scanFace(row)
+}
+
+// InsertFace creates a new face row. Called only when GetFaceByUser/
+// GetFaceByRef found none - the relevant partial unique index
+// (faces_user_uk or faces_tenant_ref_uk) is the ultimate guard against a
+// race creating two.
 func (r *Repository) InsertFace(ctx context.Context, f *Face) error {
 	_, err := r.db.Q(ctx).ExecContext(ctx, `
-		INSERT INTO faces (id, tenant_id, event_id, user_id, embedding_count, consented_at, created_at, updated_at)
+		INSERT INTO faces (id, tenant_id, user_id, ref_id, embedding_count, consented_at, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$7)`,
-		f.ID, f.TenantID, f.EventID, f.UserID, f.EmbeddingCount, f.ConsentedAt, f.CreatedAt)
+		f.ID, f.TenantID, f.UserID, f.RefID, f.EmbeddingCount, f.ConsentedAt, f.CreatedAt)
 	return err
 }
 
 // IncrementEmbeddingCount bumps a face's denormalized embedding_count by 1.
-func (r *Repository) IncrementEmbeddingCount(ctx context.Context, tenantID, faceID string) error {
+func (r *Repository) IncrementEmbeddingCount(ctx context.Context, faceID string) error {
 	res, err := r.db.Q(ctx).ExecContext(ctx,
-		`UPDATE faces SET embedding_count = embedding_count + 1 WHERE tenant_id = $1 AND id = $2`,
-		tenantID, faceID)
+		`UPDATE faces SET embedding_count = embedding_count + 1 WHERE id = $1`, faceID)
 	if err != nil {
 		return err
 	}
 	return dbutil.CheckRowsAffected(res)
 }
 
-// RevokeConsent sets consent_revoked_at. Returns domain.ErrNotFound if the
-// face does not exist in this tenant, or its consent was already revoked.
-func (r *Repository) RevokeConsent(ctx context.Context, tenantID, faceID string) error {
-	res, err := r.db.Q(ctx).ExecContext(ctx,
-		`UPDATE faces SET consent_revoked_at = now() WHERE tenant_id = $1 AND id = $2 AND consent_revoked_at IS NULL`,
-		tenantID, faceID)
+// DropFace hard-deletes faceID: every face_embeddings row under it (the
+// FK's ON DELETE CASCADE would do this on its own, but the query form
+// here is needed anyway to recover their qdrant_point_ids) and the faces
+// row itself. The caller (Service.dropFace) must delete those points from
+// Qdrant, since ON DELETE CASCADE never reaches it, and must have already
+// verified the caller is allowed to drop this particular face - this
+// method itself applies no ownership filter beyond "this id exists".
+func (r *Repository) DropFace(ctx context.Context, faceID string) ([]string, error) {
+	rows, err := r.db.Q(ctx).QueryContext(ctx,
+		`DELETE FROM face_embeddings WHERE face_id = $1 RETURNING qdrant_point_id`, faceID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return dbutil.CheckRowsAffected(res)
+	var pointIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		pointIDs = append(pointIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
+	res, err := r.db.Q(ctx).ExecContext(ctx, `DELETE FROM faces WHERE id = $1`, faceID)
+	if err != nil {
+		return nil, err
+	}
+	if err := dbutil.CheckRowsAffected(res); err != nil {
+		return nil, err
+	}
+	return pointIDs, nil
 }
 
 // ==================== face_embeddings ====================
@@ -88,19 +134,21 @@ func (r *Repository) RevokeConsent(ctx context.Context, tenantID, faceID string)
 // InsertEmbedding records one enrollment embedding under a face_id.
 func (r *Repository) InsertEmbedding(ctx context.Context, e *Embedding) error {
 	_, err := r.db.Q(ctx).ExecContext(ctx, `
-		INSERT INTO face_embeddings (id, tenant_id, event_id, user_id, face_id, qdrant_point_id, confidence_score, created_at)
+		INSERT INTO face_embeddings (id, tenant_id, user_id, ref_id, face_id, qdrant_point_id, confidence_score, created_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-		e.ID, e.TenantID, e.EventID, e.UserID, e.FaceID, e.QdrantPointID, e.ConfidenceScore, e.CreatedAt)
+		e.ID, e.TenantID, e.UserID, e.RefID, e.FaceID, e.QdrantPointID, e.ConfidenceScore, e.CreatedAt)
 	return err
 }
 
 // ListEmbeddingsByFace returns every embedding enrolled under a face_id -
 // Search uses this to learn which Qdrant point ids represent the face's
-// stored vectors.
-func (r *Repository) ListEmbeddingsByFace(ctx context.Context, tenantID, faceID string) ([]Embedding, error) {
+// stored vectors. No tenant/subject filter beyond face_id: by the time
+// this is called, the caller has already resolved (and, where needed,
+// authorized) the parent Face.
+func (r *Repository) ListEmbeddingsByFace(ctx context.Context, faceID string) ([]Embedding, error) {
 	rows, err := r.db.Q(ctx).QueryContext(ctx, `
-		SELECT id, tenant_id, event_id, user_id, face_id, qdrant_point_id, confidence_score, created_at
-		FROM face_embeddings WHERE tenant_id = $1 AND face_id = $2 ORDER BY created_at`, tenantID, faceID)
+		SELECT id, tenant_id, user_id, ref_id, face_id, qdrant_point_id, confidence_score, created_at
+		FROM face_embeddings WHERE face_id = $1 ORDER BY created_at`, faceID)
 	if err != nil {
 		return nil, err
 	}
@@ -108,9 +156,19 @@ func (r *Repository) ListEmbeddingsByFace(ctx context.Context, tenantID, faceID 
 	var out []Embedding
 	for rows.Next() {
 		var e Embedding
+		var tenantID, userID, refID sql.NullString
 		var conf sql.NullFloat64
-		if err := rows.Scan(&e.ID, &e.TenantID, &e.EventID, &e.UserID, &e.FaceID, &e.QdrantPointID, &conf, &e.CreatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &tenantID, &userID, &refID, &e.FaceID, &e.QdrantPointID, &conf, &e.CreatedAt); err != nil {
 			return nil, err
+		}
+		if tenantID.Valid {
+			e.TenantID = &tenantID.String
+		}
+		if userID.Valid {
+			e.UserID = &userID.String
+		}
+		if refID.Valid {
+			e.RefID = &refID.String
 		}
 		if conf.Valid {
 			e.ConfidenceScore = &conf.Float64
@@ -118,29 +176,6 @@ func (r *Repository) ListEmbeddingsByFace(ctx context.Context, tenantID, faceID 
 		out = append(out, e)
 	}
 	return out, rows.Err()
-}
-
-// DeleteEmbeddingsByFace removes every face_embeddings row of a face_id and
-// returns the Qdrant point ids that owned - the caller (Service) must
-// delete those points from Qdrant itself, since ON DELETE CASCADE never
-// reaches it.
-func (r *Repository) DeleteEmbeddingsByFace(ctx context.Context, tenantID, faceID string) ([]string, error) {
-	rows, err := r.db.Q(ctx).QueryContext(ctx,
-		`DELETE FROM face_embeddings WHERE tenant_id = $1 AND face_id = $2 RETURNING qdrant_point_id`,
-		tenantID, faceID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
 }
 
 // ==================== photo_face_detections ====================

@@ -2,20 +2,22 @@ package face
 
 import "time"
 
+// FaceDTO's RefID is only ever non-nil for a tenant M2M-enrolled face -
+// a Racetify user's own face has none (docs/face-tenant-enrollment-
+// plan.md §2.1). Neither TenantID nor UserID/RefID's owning account is
+// exposed here - a face_id is the only handle a caller needs.
 type FaceDTO struct {
-	ID               string     `json:"id"`
-	EventID          string     `json:"event_id"`
-	UserID           string     `json:"user_id"`
-	EmbeddingCount   int        `json:"embedding_count"`
-	ConsentedAt      time.Time  `json:"consented_at"`
-	ConsentRevokedAt *time.Time `json:"consent_revoked_at"`
-	CreatedAt        time.Time  `json:"created_at"`
+	ID             string    `json:"id"`
+	RefID          *string   `json:"ref_id,omitempty"`
+	EmbeddingCount int       `json:"embedding_count"`
+	ConsentedAt    time.Time `json:"consented_at"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 func faceResponse(f *Face) FaceDTO {
 	return FaceDTO{
-		ID: f.ID, EventID: f.EventID, UserID: f.UserID, EmbeddingCount: f.EmbeddingCount,
-		ConsentedAt: f.ConsentedAt, ConsentRevokedAt: f.ConsentRevokedAt, CreatedAt: f.CreatedAt,
+		ID: f.ID, RefID: f.RefID, EmbeddingCount: f.EmbeddingCount,
+		ConsentedAt: f.ConsentedAt, CreatedAt: f.CreatedAt,
 	}
 }
 
@@ -30,11 +32,23 @@ func embeddingResponse(e *Embedding) EmbeddingDTO {
 	return EmbeddingDTO{ID: e.ID, FaceID: e.FaceID, ConfidenceScore: e.ConfidenceScore, CreatedAt: e.CreatedAt}
 }
 
-// ListEmbeddingsDTO answers GET .../users/{uid}/face-embeddings. Face is
-// null when the user has not enrolled.
+// ListEmbeddingsDTO answers both the self and M2M "list" endpoints. Face is
+// null when the subject has not enrolled.
 type ListEmbeddingsDTO struct {
 	Face       *FaceDTO       `json:"face"`
 	Embeddings []EmbeddingDTO `json:"embeddings"`
+}
+
+func listEmbeddingsResponse(face *Face, embeddings []Embedding) ListEmbeddingsDTO {
+	dto := ListEmbeddingsDTO{Embeddings: make([]EmbeddingDTO, len(embeddings))}
+	if face != nil {
+		f := faceResponse(face)
+		dto.Face = &f
+	}
+	for i := range embeddings {
+		dto.Embeddings[i] = embeddingResponse(&embeddings[i])
+	}
+	return dto
 }
 
 type searchRequest struct {

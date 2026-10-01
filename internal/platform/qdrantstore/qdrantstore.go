@@ -82,12 +82,17 @@ type Point struct {
 // section for why detection points never carry FaceID/UserID (there is no
 // clustering step that would assign them).
 type Payload struct {
-	TenantID string `json:"tenant_id"`
-	EventID  string `json:"event_id"`
+	TenantID string `json:"tenant_id,omitempty"`
+	EventID  string `json:"event_id,omitempty"`
 	Source   string `json:"source"` // "detection" | "enrollment"
 	PhotoID  string `json:"photo_id,omitempty"`
 	UserID   string `json:"user_id,omitempty"`
-	FaceID   string `json:"face_id,omitempty"`
+	// RefID is a tenant's own opaque identifier for an enrollment point
+	// (docs/face-tenant-enrollment-plan.md) - metadata only, never
+	// filtered on at search time (only TenantID/EventID/Source are, and
+	// those come from the detection side for a Search call).
+	RefID  string `json:"ref_id,omitempty"`
+	FaceID string `json:"face_id,omitempty"`
 }
 
 // SearchResult is one match from Search: a point id, its payload (so the
@@ -238,6 +243,9 @@ func payloadMap(p Payload) map[string]any {
 	}
 	if p.UserID != "" {
 		m["user_id"] = p.UserID
+	}
+	if p.RefID != "" {
+		m["ref_id"] = p.RefID
 	}
 	if p.FaceID != "" {
 		m["face_id"] = p.FaceID

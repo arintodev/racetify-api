@@ -46,24 +46,23 @@ func invalid(field, message string) *Error {
 	return &Error{Status: http.StatusBadRequest, Code: "invalid_request", Field: field, Message: message}
 }
 
-func forbidden(code, message string) *Error {
-	return &Error{Status: http.StatusForbidden, Code: code, Message: message}
-}
-
 // consentRequired is returned by Enroll when the request does not carry an
 // explicit consent flag - a faces row (and therefore any face_embeddings)
 // must never be created without it (docs/face-search-plan.md's Privacy
-// section).
+// section). Withdrawing consent later means deleting the row outright
+// (Service.DropFace) - there is no soft-revoked state to check for.
 func consentRequired() *Error {
 	return &Error{Status: http.StatusUnprocessableEntity, Code: "consent_required",
 		Message: "Consent is required to enroll a face."}
 }
 
-// consentRevoked is returned by Search when the target face_id's consent
-// has been withdrawn.
-func consentRevoked() *Error {
-	return forbidden("consent_revoked", "This face's consent has been revoked.")
-}
+// refIDPattern bounds a tenant-supplied ref_id to the same charset/length
+// the database CHECK constraint enforces (migrations/0022) - kept in sync
+// so a bad ref_id is rejected before any embedding work happens, not just
+// at insert time.
+var refIDPattern = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,200}$`)
+
+func isValidRefID(s string) bool { return refIDPattern.MatchString(s) }
 
 // SimilarityThreshold is the cosine-similarity cutoff a detection point must
 // clear, against at least one of an enrolled face's embeddings, to count as
@@ -81,29 +80,33 @@ const EmbeddingDimension = 512
 // per enrolled embedding, before deduping by photo id.
 const searchResultLimit = 200
 
-// Face is one user's enrolled identity for an event.
+// Face is one enrolled identity. Its subject is exactly one of UserID (a
+// Racetify account, self-enrolled - TenantID nil, global, usable to
+// search any event's gallery the account can otherwise reach) or RefID
+// (an opaque identifier a tenant assigns to their own end user via the
+// M2M path - TenantID required, scoped to that tenant only). Neither is
+// tied to an event: event scoping for face search comes entirely from
+// the gallery side (photo_face_detections.photo_id -> photos.event_id).
+// See docs/face-tenant-enrollment-plan.md.
 type Face struct {
-	ID               string
-	TenantID         string
-	EventID          string
-	UserID           string
-	EmbeddingCount   int
-	ConsentedAt      time.Time
-	ConsentRevokedAt *time.Time
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	ID             string
+	TenantID       *string
+	UserID         *string
+	RefID          *string
+	EmbeddingCount int
+	ConsentedAt    time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
-// Revoked reports whether this face's consent has been withdrawn.
-func (f *Face) Revoked() bool { return f.ConsentRevokedAt != nil }
-
 // Embedding is one enrollment record - never an image, only the metadata
-// that points at the vector stored in Qdrant.
+// that points at the vector stored in Qdrant. TenantID/UserID/RefID mirror
+// its parent Face's subject.
 type Embedding struct {
 	ID              string
-	TenantID        string
-	EventID         string
-	UserID          string
+	TenantID        *string
+	UserID          *string
+	RefID           *string
 	FaceID          string
 	QdrantPointID   string
 	ConfidenceScore *float64

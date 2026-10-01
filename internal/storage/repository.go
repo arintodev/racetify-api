@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -24,6 +25,13 @@ import (
 // without the presign secret - see objectstorage.Store.VerifySignature),
 // and used as an explicit WHERE clause on the admin connection rather than
 // relied on via RLS.
+//
+// The *Personal methods (migrations/0023_object_storage_personal.up.sql)
+// are the no-tenant counterpart of their tenant-scoped siblings: a
+// personal object (tenant_id NULL) is scoped to created_by instead, via
+// db.WithUserTx rather than db.WithTenantTx - see Service.
+// StoreGeneratedPersonal's doc comment for the concrete use case
+// (internal/face's self-enroll temp image).
 type Repository struct {
 	db      *database.DB
 	adminDB *database.DB
@@ -42,7 +50,7 @@ const objectColumns = `id, tenant_id, bucket, object_key, content_type, size_byt
 func (r *Repository) Upsert(ctx context.Context, o *Object) error {
 	row := r.db.Q(ctx).QueryRowContext(ctx, `
 		INSERT INTO objects (id, tenant_id, bucket, object_key, content_type, size_bytes, sha256, status, created_by, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, 0, NULL, 'pending', $6, $7, $7)
+		VALUES ($1, NULLIF($2,'')::uuid, $3, $4, $5, 0, NULL, 'pending', NULLIF($6,'')::uuid, $7, $7)
 		ON CONFLICT (tenant_id, bucket, object_key) DO UPDATE SET
 			content_type = EXCLUDED.content_type,
 			size_bytes = 0,
@@ -52,6 +60,26 @@ func (r *Repository) Upsert(ctx context.Context, o *Object) error {
 			updated_at = EXCLUDED.updated_at
 		RETURNING id`,
 		o.ID, o.TenantID, o.Bucket, o.ObjectKey, o.ContentType, o.CreatedBy, o.CreatedAt,
+	)
+	return row.Scan(&o.ID)
+}
+
+// UpsertPersonal is Upsert's no-tenant counterpart: the object is scoped to
+// created_by (a Racetify user) instead, deduped via
+// objects_personal_bucket_key_uk (migrations/0023) rather than the
+// tenant-scoped unique index, which never matches a NULL tenant_id.
+func (r *Repository) UpsertPersonal(ctx context.Context, o *Object) error {
+	row := r.db.Q(ctx).QueryRowContext(ctx, `
+		INSERT INTO objects (id, tenant_id, bucket, object_key, content_type, size_bytes, sha256, status, created_by, created_at, updated_at)
+		VALUES ($1, NULL, $2, $3, $4, 0, NULL, 'pending', $5, $6, $6)
+		ON CONFLICT (created_by, bucket, object_key) WHERE tenant_id IS NULL DO UPDATE SET
+			content_type = EXCLUDED.content_type,
+			size_bytes = 0,
+			sha256 = NULL,
+			status = 'pending',
+			updated_at = EXCLUDED.updated_at
+		RETURNING id`,
+		o.ID, o.Bucket, o.ObjectKey, o.ContentType, o.CreatedBy, o.CreatedAt,
 	)
 	return row.Scan(&o.ID)
 }
@@ -99,6 +127,19 @@ func (r *Repository) MarkStoredTenantScoped(ctx context.Context, tenantID string
 	return dbutil.CheckRowsAffected(res)
 }
 
+// MarkStoredPersonal is MarkStoredTenantScoped's no-tenant counterpart.
+func (r *Repository) MarkStoredPersonal(ctx context.Context, userID string, bucket ObjectBucket, key string, sha256Hex *string, sizeBytes int64, at time.Time) error {
+	res, err := r.db.Q(ctx).ExecContext(ctx, `
+		UPDATE objects SET status = 'stored', sha256 = $4, size_bytes = $5, updated_at = $6
+		WHERE tenant_id IS NULL AND created_by = $1 AND bucket = $2 AND object_key = $3`,
+		userID, bucket, key, sha256Hex, sizeBytes, at,
+	)
+	if err != nil {
+		return err
+	}
+	return dbutil.CheckRowsAffected(res)
+}
+
 // GetByKey looks up a tenant's object by (bucket, key) from within an
 // already-open tenant-scoped transaction - used by Service.RequestDownload
 // to confirm the object exists and belongs to the caller's own tenant
@@ -119,15 +160,31 @@ func (r *Repository) GetByID(ctx context.Context, tenantID, id string) (*Object,
 	return scanObject(row)
 }
 
+// GetByKeyPersonal is GetByKey's no-tenant counterpart, used by
+// Service.RequestDownloadPersonal.
+func (r *Repository) GetByKeyPersonal(ctx context.Context, userID string, bucket ObjectBucket, key string) (*Object, error) {
+	row := r.db.Q(ctx).QueryRowContext(ctx, `
+		SELECT `+objectColumns+` FROM objects WHERE tenant_id IS NULL AND created_by = $1 AND bucket = $2 AND object_key = $3`,
+		userID, bucket, key)
+	return scanObject(row)
+}
+
 // GetByKeyUnscoped is GetByKey's admin-connection counterpart, used by the
 // unauthenticated GET object endpoint to resolve content_type before
 // streaming decrypted bytes back - see the type doc comment for why this
 // is safe (the caller already proved possession of a valid signature for
-// this exact tenant_id/bucket/key before this is ever called).
-func (r *Repository) GetByKeyUnscoped(ctx context.Context, tenantID string, bucket ObjectBucket, key string) (*Object, error) {
+// this exact subjectID/bucket/key before this is ever called). subjectID is
+// whatever identifier was embedded in the signed URL at presign time
+// (Service.RequestDownload passes a tenantID, RequestDownloadPersonal a
+// userID) - it matches either a tenant-scoped or a personal object in one
+// query, since a tenants.id/users.id collision is not a realistic concern
+// (both are independently random v4 UUIDs).
+func (r *Repository) GetByKeyUnscoped(ctx context.Context, subjectID string, bucket ObjectBucket, key string) (*Object, error) {
 	row := r.adminDB.DB.QueryRowContext(ctx, `
-		SELECT `+objectColumns+` FROM objects WHERE tenant_id = $1 AND bucket = $2 AND object_key = $3`,
-		tenantID, bucket, key)
+		SELECT `+objectColumns+` FROM objects
+		WHERE bucket = $2 AND object_key = $3
+		AND (tenant_id = $1 OR (tenant_id IS NULL AND created_by = $1))`,
+		subjectID, bucket, key)
 	return scanObject(row)
 }
 
@@ -171,14 +228,32 @@ func (r *Repository) List(ctx context.Context, tenantID string, page pagination.
 	return pagination.Page[Object]{Items: out, NextCursor: next}, nil
 }
 
+// DeleteTenantScoped hard-deletes a tenant's object row. The caller must
+// separately remove the backend bytes (server_io.go's DeleteGenerated).
+func (r *Repository) DeleteTenantScoped(ctx context.Context, tenantID string, bucket ObjectBucket, key string) error {
+	_, err := r.db.Q(ctx).ExecContext(ctx,
+		`DELETE FROM objects WHERE tenant_id = $1 AND bucket = $2 AND object_key = $3`, tenantID, bucket, key)
+	return err
+}
+
+// DeletePersonal is DeleteTenantScoped's no-tenant counterpart.
+func (r *Repository) DeletePersonal(ctx context.Context, userID string, bucket ObjectBucket, key string) error {
+	_, err := r.db.Q(ctx).ExecContext(ctx,
+		`DELETE FROM objects WHERE tenant_id IS NULL AND created_by = $1 AND bucket = $2 AND object_key = $3`, userID, bucket, key)
+	return err
+}
+
 func scanObject(row dbutil.RowScanner) (*Object, error) {
 	o := &Object{}
+	var tenantID, createdBy sql.NullString
 	err := row.Scan(
-		&o.ID, &o.TenantID, &o.Bucket, &o.ObjectKey, &o.ContentType, &o.SizeBytes, &o.SHA256,
-		&o.Status, &o.CreatedBy, &o.CreatedAt, &o.UpdatedAt,
+		&o.ID, &tenantID, &o.Bucket, &o.ObjectKey, &o.ContentType, &o.SizeBytes, &o.SHA256,
+		&o.Status, &createdBy, &o.CreatedAt, &o.UpdatedAt,
 	)
 	if err != nil {
 		return nil, dbutil.MapNotFound(err)
 	}
+	o.TenantID = tenantID.String
+	o.CreatedBy = createdBy.String
 	return o, nil
 }

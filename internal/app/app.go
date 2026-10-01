@@ -135,7 +135,11 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 	certificateService := certificate.NewService(appDB, certificateRepo, auditRepo, objectStore, cfg.Storage, jobQueue, templateService, storageService, fontService)
 	watermarkRepo := watermark.NewRepository(appDB)
 	watermarkService := watermark.NewService(appDB, watermarkRepo, auditRepo, objectStore, cfg.Storage)
-	galleryService := gallery.NewService(appDB, gallery.NewRepository(appDB), auditRepo, storageService, objectStore, cfg.Storage, jobQueue, watermarkRepo)
+	// ocrClient points at the externally-deployed BIB-detection
+	// microservice (docs/media-gallery-integration.md) - same "blank
+	// ServiceURL tolerated" shape as embedClient below.
+	ocrClient := gallery.NewOCRClient(cfg.BibOCR.ServiceURL, cfg.BibOCR.ServiceKey, cfg.BibOCR.RequestTimeout)
+	galleryService := gallery.NewService(appDB, gallery.NewRepository(appDB), auditRepo, storageService, objectStore, cfg.Storage, jobQueue, watermarkRepo, ocrClient)
 	eventService := event.NewService(appDB, events, auditRepo, authRepo, mail, cfg.Auth, tenants)
 	portalService := portal.NewService(appDB, eventService, portal.NewRepository(appDB), certificateRepo, certificateService, galleryService)
 

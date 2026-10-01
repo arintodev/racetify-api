@@ -37,10 +37,16 @@ type Service struct {
 	// thumbnail job (thumbnail_job.go's applyWatermarks). Nil is tolerated
 	// the same way queue is: the job just composites nothing.
 	watermarks *watermark.Repository
+	// ocr calls the externally-deployed BIB-detection microservice from
+	// the same media.photo_process job (thumbnail_job.go's runOCR) - a nil
+	// or unconfigured client is tolerated: the job just skips the OCR step
+	// and photos stay ocr_status=pending, the same as before this existed
+	// (docs/media-gallery-integration.md).
+	ocr *OCRClient
 }
 
-func NewService(db *database.DB, repo *Repository, audit *audit.Repository, objects *storage.Service, store objectstorage.Driver, cfg config.StorageConfig, queue *jobqueue.Queue, watermarks *watermark.Repository) *Service {
-	return &Service{db: db, repo: repo, audit: audit, storage: objects, store: store, cfg: cfg, queue: queue, watermarks: watermarks}
+func NewService(db *database.DB, repo *Repository, audit *audit.Repository, objects *storage.Service, store objectstorage.Driver, cfg config.StorageConfig, queue *jobqueue.Queue, watermarks *watermark.Repository, ocr *OCRClient) *Service {
+	return &Service{db: db, repo: repo, audit: audit, storage: objects, store: store, cfg: cfg, queue: queue, watermarks: watermarks, ocr: ocr}
 }
 
 func (s *Service) recordAudit(ctx context.Context, tenantID, actorUserID, action string, metadata map[string]any) error {

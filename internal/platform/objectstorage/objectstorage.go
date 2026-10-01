@@ -152,6 +152,12 @@ type ProxyDriver interface {
 	Put(bucket Bucket, tenantID, key string, data []byte) (sha256Hex string, size int64, err error)
 	// Get reads and decrypts an object's plaintext bytes.
 	Get(bucket Bucket, tenantID, key string) ([]byte, error)
+	// Delete removes an object's bytes from the backend. Safe to call even
+	// if the key was never written or was already removed - a caller
+	// cleaning up a short-lived temp object (internal/storage's
+	// DeleteGenerated/DeletePersonal) should never fail just because the
+	// cleanup runs twice.
+	Delete(bucket Bucket, tenantID, key string) error
 }
 
 // DirectDriver is implemented only by drivers whose presigned URLs point
@@ -166,6 +172,25 @@ type DirectDriver interface {
 	// the backend (a HeadObject call for r2Driver) and returns its size.
 	// Returns ErrNotFound if nothing was ever PUT to the presigned URL.
 	ConfirmUpload(bucket Bucket, tenantID, key string) (size int64, err error)
+}
+
+// DirectWriter is an optional capability: a driver that can write and
+// delete bytes straight against its backend using its own credentials,
+// with no client/browser round-trip at all - unlike everything else a
+// DirectDriver (r2Driver) does, which always routes through a presigned
+// URL a client PUTs to. This is for a short-lived, server-generated blob
+// with no separate upload step (internal/face's temp face-enrollment
+// image, which must exist just long enough for an external microservice
+// to fetch it by URL - docs/face-tenant-enrollment-plan.md §9). Every
+// ProxyDriver ("local") already satisfies this trivially via its own
+// Put/Delete; r2Driver implements it separately using its own S3 client's
+// PutObject/DeleteObject, bypassing the presign flow entirely. Kept
+// distinct from ProxyDriver (whose Put/Get/Delete trio implies the server
+// also observes reads, which r2Driver still never does) rather than
+// widening that interface.
+type DirectWriter interface {
+	PutDirect(bucket Bucket, tenantID, key string, data []byte) error
+	DeleteDirect(bucket Bucket, tenantID, key string) error
 }
 
 // Config is New/NewDriver's input, mirroring config.StorageConfig

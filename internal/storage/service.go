@@ -152,6 +152,42 @@ func (s *Service) RequestDownload(ctx context.Context, tenantID, key, bucketStr 
 	return &DownloadTicket{URL: ticket.URL, ExpiresAt: ticket.ExpiresAt}, nil
 }
 
+// RequestDownloadPersonal is RequestDownload's no-tenant counterpart: mints
+// a signed download URL for a personal (tenant_id NULL) object scoped to
+// userID, inside db.WithUserTx. Used by internal/face's self-enroll path
+// to hand the externally-deployed face-detector service a URL for its temp
+// enrollment image (docs/face-tenant-enrollment-plan.md). Unlike
+// StoreGeneratedPersonal, this works for any driver - presigning a GET
+// never requires the server to hold the bytes.
+func (s *Service) RequestDownloadPersonal(ctx context.Context, userID, key, bucketStr string) (*DownloadTicket, error) {
+	bucket := objectstorage.Bucket(bucketStr)
+	if !bucket.Valid() {
+		return nil, fmt.Errorf("service: %w: bucket must be \"public\" or \"private\"", domain.ErrInvalidState)
+	}
+	if err := objectstorage.ValidateKey(key); err != nil {
+		return nil, fmt.Errorf("service: %w: %v", domain.ErrInvalidState, err)
+	}
+
+	var obj *Object
+	err := s.db.WithUserTx(ctx, userID, func(ctx context.Context) error {
+		var err error
+		obj, err = s.objects.GetByKeyPersonal(ctx, userID, ObjectBucket(bucket), key)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	if obj.Status != ObjectStatusStored {
+		return nil, fmt.Errorf("service: %w: object upload has not completed yet", domain.ErrInvalidState)
+	}
+
+	ticket, err := objectstorage.GetURL(s.store, bucket, userID, key, s.cfg.DownloadTTL)
+	if err != nil {
+		return nil, err
+	}
+	return &DownloadTicket{URL: ticket.URL, ExpiresAt: ticket.ExpiresAt}, nil
+}
+
 // ListObjects returns one keyset-paginated page of tenantID's objects -
 // see internal/platform/pagination for why keyset rather than
 // LIMIT/OFFSET.
