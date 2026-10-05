@@ -159,8 +159,8 @@ services:
       # Same shape as FACE_EMBED_SERVICE_URL/KEY above - the photo bib
       # service (BIB-detection/OCR, docs/media-gallery-integration.md) is
       # also deployed externally, no compose service for it either.
-      PHOTO_BIB_SERVICE_URL: ${PHOTO_BIB_SERVICE_URL}
-      PHOTO_BIB_SERVICE_KEY: ${PHOTO_BIB_SERVICE_KEY}
+      BIB_OCR_SERVICE_URL: ${BIB_OCR_SERVICE_URL}
+      BIB_OCR_SERVICE_KEY: ${BIB_OCR_SERVICE_KEY}
     depends_on:
       postgres:
         condition: service_healthy

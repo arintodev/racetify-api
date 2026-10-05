@@ -318,9 +318,9 @@ func Load() (*Config, error) {
 			RequestTimeout: getEnvDuration("FACE_EMBED_REQUEST_TIMEOUT", 15*time.Second),
 		},
 		BibOCR: BibOCRConfig{
-			ServiceURL:     getEnv("PHOTO_BIB_SERVICE_URL", ""),
-			ServiceKey:     getEnv("PHOTO_BIB_SERVICE_KEY", ""),
-			RequestTimeout: getEnvDuration("PHOTO_BIB_REQUEST_TIMEOUT", 15*time.Second),
+			ServiceURL:     getEnv("BIB_OCR_SERVICE_URL", ""),
+			ServiceKey:     getEnv("BIB_OCR_SERVICE_KEY", ""),
+			RequestTimeout: getEnvDuration("BIB_OCR_REQUEST_TIMEOUT", 15*time.Second),
 		},
 	}
 

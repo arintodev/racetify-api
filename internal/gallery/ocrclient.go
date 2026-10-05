@@ -84,7 +84,7 @@ type processURLResponse struct {
 // DetectAndEmbed's resilience style.
 func (c *OCRClient) ProcessURL(ctx context.Context, photoURL string) ([]DetectedBIB, error) {
 	if !c.Configured() {
-		return nil, fmt.Errorf("gallery: PHOTO_BIB_SERVICE_URL is not configured")
+		return nil, fmt.Errorf("gallery: BIB_OCR_SERVICE_URL is not configured")
 	}
 	tags, err := c.processURLOnce(ctx, photoURL)
 	if err != nil {
