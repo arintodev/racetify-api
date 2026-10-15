@@ -207,9 +207,9 @@ type FaceEmbedConfig struct {
 // part of docker-compose.yml, same externally-deployed shape as
 // FaceEmbedConfig above). It exposes POST {ServiceURL}/process-url, which
 // takes a downloadable URL for the photo (not the image bytes themselves -
-// internal/gallery.OCRClient builds one via objectstorage.GetURL) and
+// internal builds one via objectstorage.GetURL) and
 // answers with every BIB text reading it found. A blank ServiceURL is
-// tolerated the same way (OCRClient.Configured() gates each call) -
+// tolerated the same way 
 // internal/gallery.Service.RunPhotoProcess still makes thumbnails even
 // when this is unset, it just skips the OCR step.
 type BibOCRConfig struct {

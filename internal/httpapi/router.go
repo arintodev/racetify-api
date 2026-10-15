@@ -20,6 +20,7 @@ import (
 	"github.com/racetify/racetify-api/internal/certificate"
 	"github.com/racetify/racetify-api/internal/config"
 	"github.com/racetify/racetify-api/internal/event"
+	"github.com/racetify/racetify-api/internal/bibdetect"
 	"github.com/racetify/racetify-api/internal/face"
 	"github.com/racetify/racetify-api/internal/fontlib"
 	"github.com/racetify/racetify-api/internal/gallery"
@@ -70,6 +71,7 @@ type Deps struct {
 	Fonts        *fontlib.Service
 	Gallery      *gallery.Service
 	Watermark    *watermark.Service
+	BibDetect    *bibdetect.Service
 	Face         *face.Service
 	JobQueue     *jobqueue.Queue
 	Portal       *portal.Service

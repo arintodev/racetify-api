@@ -100,7 +100,6 @@ type photoResultDTO struct {
 // error) means no face was detected - not a failure. A PhotoResult.status
 // of "error" is translated into a Go error carrying its message. One retry
 // is attempted on a transient (connection-level) failure, matching
-// gallery.OCRClient.ProcessURL's resilience style.
 func (c *EmbedClient) DetectAndEmbed(ctx context.Context, photoID, url string) ([]DetectedFace, error) {
 	if !c.Configured() {
 		return nil, fmt.Errorf("face: FACE_EMBED_SERVICE_URL is not configured")

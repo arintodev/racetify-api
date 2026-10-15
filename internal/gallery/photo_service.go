@@ -254,6 +254,9 @@ func (s *Service) CompleteUploads(ctx context.Context, tenantID, eventID, albumI
 		_, _ = s.queue.Enqueue(ctx, tenantID, actorUserID, domain.JobTypeMediaFaceDetect, map[string]any{
 			"event_id": eventID, "album_id": albumID, "photo_ids": createdPhotoIDs,
 		})
+		_, _ = s.queue.Enqueue(ctx, tenantID, actorUserID, domain.JobTypeMediaBibDetect, map[string]any{
+			"event_id": eventID, "album_id": albumID, "photo_ids": createdPhotoIDs,
+		})
 	}
 	return results, jobID, nil
 }

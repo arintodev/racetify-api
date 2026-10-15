@@ -28,27 +28,23 @@
 package gallery
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
-	"fmt"
-	"image"
-	"image/jpeg"
-	_ "image/png" // decode support only; this job never writes PNGs
-	"math"
-	"path"
-	"regexp"
-	"strconv"
-	"strings"
+    "bytes"
+    "context"
+    "encoding/json"
+    "fmt"
+    "image"
+    "image/jpeg"
+    _ "image/png" // decode support only; this job never writes PNGs
+    "math"
+    "path"
+    "strings"
 
-	"golang.org/x/image/draw"
+    "golang.org/x/image/draw"
 
-	"github.com/racetify/racetify-api/internal/domain"
-	"github.com/racetify/racetify-api/internal/jobqueue"
-	"github.com/racetify/racetify-api/internal/platform/dbutil"
-	"github.com/racetify/racetify-api/internal/platform/objectstorage"
-	"github.com/racetify/racetify-api/internal/security"
-	"github.com/racetify/racetify-api/internal/watermark"
+    "github.com/racetify/racetify-api/internal/domain"
+    "github.com/racetify/racetify-api/internal/jobqueue"
+    "github.com/racetify/racetify-api/internal/platform/objectstorage"
+    "github.com/racetify/racetify-api/internal/watermark"
 )
 
 // Thumbnail dimensions/format (§ "Implement" step 1 of the task that added
@@ -144,62 +140,33 @@ func (s *Service) RunPhotoProcess(ctx context.Context, job *jobqueue.Job) (map[s
 		return nil, "", fmt.Errorf("gallery: load watermarks: %w", err)
 	}
 
-	// The OCR step is skipped for the whole batch, not attempted and
-	// failed per photo, when unconfigured - thumbnailing must not depend
-	// on this service's availability (this file's package doc comment).
-	ocrConfigured := s.ocr != nil && s.ocr.Configured()
-
-	made, skipped, failed := 0, 0, 0
-	bibMade, bibSkipped, bibFailed := 0, 0, 0
-	var failures, bibFailures []string
-	for i, photoID := range p.PhotoIDs {
-		if err := ctx.Err(); err != nil {
-			return nil, "", err
-		}
-		switch outcome, err := s.makeThumbnail(ctx, job.TenantID, job.CreatedBy, photoID, watermarks, assets); {
-		case err != nil:
-			failed++
-			failures = append(failures, fmt.Sprintf("%s: %v", photoID, err))
-		case outcome == thumbnailSkipped:
-			skipped++
-		default:
-			made++
-		}
-
-		if !ocrConfigured {
-			bibSkipped++
-		} else {
-			switch outcome, err := s.runOCR(ctx, job.TenantID, photoID); {
-			case err != nil:
-				bibFailed++
-				bibFailures = append(bibFailures, fmt.Sprintf("%s: %v", photoID, err))
-			case outcome == ocrSkipped:
-				bibSkipped++
-			default:
-				bibMade++
-			}
-		}
-
-		_ = s.queue.UpdateProgress(ctx, job, i+1, total)
-	}
-
-	result := map[string]any{
-		"count": total,
-		"made": made, "skipped": skipped, "failed": failed,
-		"bib_made": bibMade, "bib_skipped": bibSkipped, "bib_failed": bibFailed,
-	}
+    // The OCR step has been removed; we only create thumbnails.
+    made, failed := 0, 0
+    var failures []string
+    for i, photoID := range p.PhotoIDs {
+        if err := ctx.Err(); err != nil {
+            return nil, "", err
+        }
+        // Run the thumbnail creation; handle errors.
+        _, err := s.makeThumbnail(ctx, job.TenantID, job.CreatedBy, photoID, watermarks, assets)
+        if err != nil {
+            failed++
+            failures = append(failures, fmt.Sprintf("%s: %v", photoID, err))
+        } else {
+            made++
+        }
+        _ = s.queue.UpdateProgress(ctx, job, i+1, total)
+    }
+    result := map[string]any{
+        "count": total,
+        "made":  made,
+        "failed": failed,
+    }
 	var msgs []string
-	if failed > 0 {
+    if failed > 0 {
 		msg := fmt.Sprintf("%d of %d photos could not be thumbnailed", failed, total)
 		if len(failures) > 0 {
 			msg += ": " + strings.Join(failures, "; ")
-		}
-		msgs = append(msgs, msg)
-	}
-	if bibFailed > 0 {
-		msg := fmt.Sprintf("%d of %d photos could not be BIB-detected", bibFailed, total)
-		if len(bibFailures) > 0 {
-			msg += ": " + strings.Join(bibFailures, "; ")
 		}
 		msgs = append(msgs, msg)
 	}
@@ -295,123 +262,14 @@ func (s *Service) makeThumbnail(ctx context.Context, tenantID, actorUserID, phot
 
 	key := thumbnailKey(p.AlbumID, p.ID)
 	obj, err := s.storage.StoreGenerated(ctx, tenantID, actorUserID, string(objectstorage.BucketPrivate), key, "image/jpeg", buf.Bytes())
-	if err != nil {
-		return 0, fmt.Errorf("store thumbnail: %w", err)
-	}
-	if err := s.db.WithTenantTx(ctx, tenantID, func(ctx context.Context) error {
-		return s.repo.UpdatePhotoThumbnail(ctx, tenantID, p.ID, obj.ID)
-	}); err != nil {
-		return 0, fmt.Errorf("record thumbnail: %w", err)
-	}
-	return thumbnailMade, nil
-}
-
-type ocrOutcome int
-
-const (
-	ocrMade ocrOutcome = iota
-	// ocrSkipped is not a failure: a photo whose ocr_status is no longer
-	// "pending" (already processed/failed - a retried job, or a human
-	// already tagged/confirmed it and settlePending moved it past
-	// pending), the same "already done, leave it" reasoning
-	// thumbnailSkipped uses for HasThumbnail().
-	ocrSkipped
-)
-
-var (
-	nonAlnumPattern = regexp.MustCompile(`[^a-zA-Z0-9]`)
-	nonDigitPattern = regexp.MustCompile(`[^0-9]`)
-)
-
-// ocrBibFields turns one raw OCR text reading into the (bib_string,
-// bib_number) pair photo_tags stores, matching the photo bib service's own
-// reference client exactly rather than reusing tag_repository.go's
-// parseBibNumber (which requires the whole string to already be numeric,
-// so it would reject e.g. "A1024"): bib_string keeps only letters/digits,
-// case preserved; bib_number is the digits-only reading, or nil when the
-// text has none. An empty bib_string (the reading was pure punctuation/
-// whitespace) is the caller's signal to discard it - there is nothing a
-// person could confirm or search for.
-func ocrBibFields(text string) (bibString string, bibNumber *int) {
-	bibString = nonAlnumPattern.ReplaceAllString(text, "")
-	digits := nonDigitPattern.ReplaceAllString(text, "")
-	if digits == "" {
-		return bibString, nil
-	}
-	n, err := strconv.Atoi(digits)
-	if err != nil {
-		return bibString, nil
-	}
-	return bibString, &n
-}
-
-// runOCR does the work for one photo: load its row, skip it if it is not
-// still ocr_status=pending, otherwise hand the photo bib service a
-// downloadable URL for the original and record every reading above
-// OCRMinConfidence as a photo_tags row before marking the photo processed.
-// A reading below OCRMinConfidence is discarded outright - too unreliable
-// to even surface for manual review (gallery.go's OCRMinConfidence doc
-// comment).
-func (s *Service) runOCR(ctx context.Context, tenantID, photoID string) (ocrOutcome, error) {
-	var p *Photo
-	err := s.db.WithTenantTx(ctx, tenantID, func(ctx context.Context) error {
-		var err error
-		p, err = s.repo.GetPhotoByID(ctx, tenantID, photoID)
-		return err
-	})
-	if err != nil {
-		return 0, err
-	}
-	if p.OCRStatus != OCRPending {
-		return ocrSkipped, nil
-	}
-
-	// The photo bib service fetches the image itself, so it needs a URL,
-	// not bytes - unlike internal/face.EmbedClient, which is handed the
-	// bytes directly. The original lives in the private bucket, so this is
-	// a short-lived signed download URL (objectstorage.GetURL), the same
-	// one PhotoURLs/PreviewURL build for an authorized viewer.
-	ticket, err := objectstorage.GetURL(s.store, objectstorage.Bucket(p.OriginalBucket), tenantID, p.OriginalKey, s.cfg.DownloadTTL)
-	if err != nil {
-		return 0, fmt.Errorf("sign original url: %w", err)
-	}
-	detected, err := s.ocr.ProcessURL(ctx, ticket.URL)
-	if err != nil {
-		// Best-effort: a failure to even flag the photo as failed must not
-		// mask the original process-url error returned below.
-		_ = s.db.WithTenantTx(ctx, tenantID, func(ctx context.Context) error {
-			return s.repo.SetOCRFailed(ctx, tenantID, photoID, err.Error())
-		})
-		return 0, fmt.Errorf("process-url: %w", err)
-	}
-
-	err = s.db.WithTenantTx(ctx, tenantID, func(ctx context.Context) error {
-		for _, d := range detected {
-			if d.Confidence < OCRMinConfidence {
-				continue
-			}
-			bibString, bibNumber := ocrBibFields(d.Text)
-			if bibString == "" {
-				continue
-			}
-			confidence := d.Confidence
-			tag := &Tag{ID: security.MustNewUUIDv4(), PhotoID: photoID, BIB: bibString, Source: TagSourceOCR, Confidence: &confidence}
-			if err := s.repo.InsertOCRTag(ctx, tenantID, tag, bibNumber); err != nil {
-				if dbutil.IsUniqueViolation(err) {
-					// A manual tag or an earlier OCR read already claimed
-					// this exact BIB on this photo (photo_tags_photo_bib_uk)
-					// - not a failure, just nothing new to add.
-					continue
-				}
-				return err
-			}
-		}
-		return s.repo.SetOCRStatus(ctx, tenantID, photoID, OCRProcessed)
-	})
-	if err != nil {
-		return 0, err
-	}
-	return ocrMade, nil
+    // Persist the thumbnail reference in a new tenant‑scoped transaction
+    if err := s.db.WithTenantTx(ctx, tenantID, func(ctx context.Context) error {
+        return s.repo.UpdatePhotoThumbnail(ctx, tenantID, p.ID, obj.ID)
+    }); err != nil {
+        return 0, fmt.Errorf("record thumbnail: %w", err)
+    }
+    // Successful thumbnail creation
+    return thumbnailMade, nil
 }
 
 // thumbnailKey is where a photo's thumbnail is stored: alongside its

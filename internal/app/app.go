@@ -36,6 +36,7 @@ import (
 	"github.com/racetify/racetify-api/internal/storage"
 	"github.com/racetify/racetify-api/internal/tenant"
 	"github.com/racetify/racetify-api/internal/watermark"
+	"github.com/racetify/racetify-api/internal/bibdetect"
 )
 
 // App bundles the router with the resources Build opened, so the caller
@@ -135,34 +136,19 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 	certificateService := certificate.NewService(appDB, certificateRepo, auditRepo, objectStore, cfg.Storage, jobQueue, templateService, storageService, fontService)
 	watermarkRepo := watermark.NewRepository(appDB)
 	watermarkService := watermark.NewService(appDB, watermarkRepo, auditRepo, objectStore, cfg.Storage)
-	// ocrClient points at the externally-deployed BIB-detection
-	// microservice (docs/media-gallery-integration.md) - same "blank
-	// ServiceURL tolerated" shape as embedClient below.
-	ocrClient := gallery.NewOCRClient(cfg.BibOCR.ServiceURL, cfg.BibOCR.ServiceKey, cfg.BibOCR.RequestTimeout)
-	galleryService := gallery.NewService(appDB, gallery.NewRepository(appDB), auditRepo, storageService, objectStore, cfg.Storage, jobQueue, watermarkRepo, ocrClient)
+	galleryService := gallery.NewService(appDB, gallery.NewRepository(appDB), auditRepo, storageService, objectStore, cfg.Storage, jobQueue, watermarkRepo)
 	eventService := event.NewService(appDB, events, auditRepo, authRepo, mail, cfg.Auth, tenants)
 	portalService := portal.NewService(appDB, eventService, portal.NewRepository(appDB), certificateRepo, certificateService, galleryService)
-
-	// Face search (docs/face-search-plan.md): qdrantStore talks to the
-	// self-hosted Qdrant instance (docker-compose.yml). Unlike
-	// objectstorage.NewDriver's "fail fast at startup", an unreachable
-	// Qdrant is only logged here, not fatal to boot - Qdrant is a newer,
-	// optional dependency of this one feature, and every other bounded
-	// context (gallery, participants, ...) must keep working with
-	// `go run`/`make` on a host that has not started docker-compose's
-	// qdrant service. The first real face-search or enrollment call will
-	// surface the connection error normally at that point.
-	// embedClient points at the externally-deployed (Google Cloud Run)
-	// face-embedding microservice; a blank cfg.FaceEmbed.ServiceURL is
-	// tolerated the same way (EmbedClient.Configured() gates each call).
 	qdrantStore := qdrantstore.New(qdrantstore.Config{
 		Addr: cfg.Qdrant.Addr, APIKey: cfg.Qdrant.APIKey, CollectionName: cfg.Qdrant.CollectionName,
 	})
 	if err := qdrantStore.EnsureCollection(ctx, face.EmbeddingDimension); err != nil {
 		log.Warn("app: qdrant collection not ready - face search will fail until this is resolved", "error", err)
 	}
-	embedClient := face.NewEmbedClient(cfg.FaceEmbed.ServiceURL, cfg.FaceEmbed.ServiceKey, cfg.FaceEmbed.RequestTimeout)
-	faceService := face.NewService(appDB, face.NewRepository(appDB), auditRepo, storageService, qdrantStore, embedClient, galleryService, jobQueue)
+	bibOCRCclient := bibdetect.NewBibOCRClient(cfg.BibOCR.ServiceURL, cfg.BibOCR.ServiceKey, cfg.BibOCR.RequestTimeout)
+	bibDetectService := bibdetect.NewService(appDB, bibdetect.NewRepository(appDB), storageService, bibOCRCclient, galleryService, jobQueue)
+	faceEmbedClient := face.NewEmbedClient(cfg.FaceEmbed.ServiceURL, cfg.FaceEmbed.ServiceKey, cfg.FaceEmbed.RequestTimeout)
+	faceService := face.NewService(appDB, face.NewRepository(appDB), auditRepo, storageService, qdrantStore, faceEmbedClient, galleryService, jobQueue)
 	bibPrintService := bibprint.NewService(appDB, jobQueue, auditRepo, templateService, participantService, storageService, fontService)
 
 	return &App{
@@ -192,6 +178,7 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 			Fonts:        fontService,
 			Gallery:      galleryService,
 			Watermark:    watermarkService,
+			BibDetect:    bibDetectService,
 			Face:         faceService,
 			JobQueue:     jobQueue,
 			Portal:       portalService,

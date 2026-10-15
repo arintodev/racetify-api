@@ -26,6 +26,7 @@ import (
 	"github.com/racetify/racetify-api/internal/config"
 	"github.com/racetify/racetify-api/internal/face"
 	"github.com/racetify/racetify-api/internal/gallery"
+    "github.com/racetify/racetify-api/internal/bibdetect"
 	"github.com/racetify/racetify-api/internal/jobqueue"
 	"github.com/racetify/racetify-api/internal/platform/logger"
 )
@@ -64,6 +65,7 @@ func main() {
 	// over the same upload batch gallery.RegisterJob's job type covers; see
 	// gallery/photo_service.go's CompleteUploads for the dual-enqueue.
 	face.RegisterJob(dispatcher, a.Handler.Face)
+    bibdetect.RegisterJob(dispatcher, a.Handler.BibDetect)
 
 	log.Info("racetify-worker starting", "env", cfg.Env)
 	jobqueue.Run(ctx, a.Handler.JobQueue, dispatcher, log)

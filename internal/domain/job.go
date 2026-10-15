@@ -33,4 +33,5 @@ const (
 	// racetify-app repo) - internal/face's detection_job.go. It never
 	// assigns a face_id: matching happens at search time.
 	JobTypeMediaFaceDetect JobType = "media.face_detect"
+    JobTypeMediaBibDetect JobType = "media.bib_detect"
 )

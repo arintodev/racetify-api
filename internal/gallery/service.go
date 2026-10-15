@@ -1,21 +1,21 @@
 package gallery
 
 import (
-	"context"
-	"strings"
-	"time"
-	"unicode/utf8"
+    "context"
+    "strings"
+    "time"
+    "unicode/utf8"
 
-	"github.com/racetify/racetify-api/internal/audit"
-	"github.com/racetify/racetify-api/internal/config"
-	"github.com/racetify/racetify-api/internal/domain"
-	"github.com/racetify/racetify-api/internal/jobqueue"
-	"github.com/racetify/racetify-api/internal/platform/database"
-	"github.com/racetify/racetify-api/internal/platform/objectstorage"
-	"github.com/racetify/racetify-api/internal/platform/rbac"
-	"github.com/racetify/racetify-api/internal/security"
-	"github.com/racetify/racetify-api/internal/storage"
-	"github.com/racetify/racetify-api/internal/watermark"
+    "github.com/racetify/racetify-api/internal/audit"
+    "github.com/racetify/racetify-api/internal/config"
+    "github.com/racetify/racetify-api/internal/domain"
+    "github.com/racetify/racetify-api/internal/jobqueue"
+    "github.com/racetify/racetify-api/internal/platform/database"
+    "github.com/racetify/racetify-api/internal/platform/objectstorage"
+    "github.com/racetify/racetify-api/internal/platform/rbac"
+    "github.com/racetify/racetify-api/internal/security"
+    "github.com/racetify/racetify-api/internal/storage"
+    "github.com/racetify/racetify-api/internal/watermark"
 )
 
 // Service implements the gallery use cases. Every mutating method takes the
@@ -42,11 +42,10 @@ type Service struct {
 	// or unconfigured client is tolerated: the job just skips the OCR step
 	// and photos stay ocr_status=pending, the same as before this existed
 	// (docs/media-gallery-integration.md).
-	ocr *OCRClient
 }
 
-func NewService(db *database.DB, repo *Repository, audit *audit.Repository, objects *storage.Service, store objectstorage.Driver, cfg config.StorageConfig, queue *jobqueue.Queue, watermarks *watermark.Repository, ocr *OCRClient) *Service {
-	return &Service{db: db, repo: repo, audit: audit, storage: objects, store: store, cfg: cfg, queue: queue, watermarks: watermarks, ocr: ocr}
+func NewService(db *database.DB, repo *Repository, audit *audit.Repository, objects *storage.Service, store objectstorage.Driver, cfg config.StorageConfig, queue *jobqueue.Queue, watermarks *watermark.Repository) *Service {
+    return &Service{db: db, repo: repo, audit: audit, storage: objects, store: store, cfg: cfg, queue: queue, watermarks: watermarks}
 }
 
 func (s *Service) recordAudit(ctx context.Context, tenantID, actorUserID, action string, metadata map[string]any) error {

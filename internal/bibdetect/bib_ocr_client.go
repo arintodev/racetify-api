@@ -1,4 +1,4 @@
-package gallery
+package bibdetect
 
 import (
 	"bytes"
@@ -14,34 +14,26 @@ import (
 // image. Unlike internal/face's DetectedFace, there is no bounding box in
 // this service's response - a photo_tags row made from this carries a NULL
 // box (the schema already allows it, same as a manual tag).
-type DetectedBIB struct {
+type DetectedBib struct {
 	Text       string
 	Confidence float64
 }
 
-// OCRClient calls the photo bib service - the externally-deployed
-// BIB-detection microservice (docs/media-gallery-integration.md), the same
-// "not part of this repo's docker-compose.yml" shape as
-// internal/face.EmbedClient. Unlike EmbedClient, which uploads the image
-// bytes themselves, this service takes a URL it fetches the photo from
-// (ProcessURL) - a generous default timeout still applies for the same
-// reason EmbedClient's does: a serverless cold start can take several
-// seconds.
-type OCRClient struct {
+type BibOCRClient struct {
 	baseURL string
 	apiKey  string
 	client  *http.Client
 }
 
-// NewOCRClient constructs a client. baseURL is the service's HTTPS URL
+// NewBibOCRClient constructs a client. baseURL is the service's HTTPS URL
 // (config.BibOCRConfig.ServiceURL); apiKey, if set, is sent as a
 // shared-secret header (the service's own reference client sends none, so
 // this is optional - the header is simply omitted when apiKey is "").
-func NewOCRClient(baseURL, apiKey string, timeout time.Duration) *OCRClient {
+func NewBibOCRClient(baseURL, apiKey string, timeout time.Duration) *BibOCRClient {
 	if timeout <= 0 {
 		timeout = 15 * time.Second
 	}
-	return &OCRClient{
+	return &BibOCRClient{
 		baseURL: baseURL,
 		apiKey:  apiKey,
 		client:  &http.Client{Timeout: timeout},
@@ -53,7 +45,7 @@ func NewOCRClient(baseURL, apiKey string, timeout time.Duration) *OCRClient {
 // a request to an empty URL when it wasn't (docs/media-gallery-
 // integration.md: thumbnailing must not depend on this service's
 // availability).
-func (c *OCRClient) Configured() bool { return c.baseURL != "" }
+func (c *BibOCRClient) Configured() bool { return c.baseURL != "" }
 
 // processURLRequest/processURLResponse mirror the photo bib service's own
 // contract exactly (POST {baseURL}/process-url, body {"url": "..."},
@@ -82,7 +74,7 @@ type processURLResponse struct {
 // was found - not a failure. One retry is attempted on a transient
 // (connection-level) failure, matching internal/face.EmbedClient.
 // DetectAndEmbed's resilience style.
-func (c *OCRClient) ProcessURL(ctx context.Context, photoURL string) ([]DetectedBIB, error) {
+func (c *BibOCRClient) ProcessURL(ctx context.Context, photoURL string) ([]DetectedBib, error) {
 	if !c.Configured() {
 		return nil, fmt.Errorf("gallery: BIB_OCR_SERVICE_URL is not configured")
 	}
@@ -96,7 +88,7 @@ func (c *OCRClient) ProcessURL(ctx context.Context, photoURL string) ([]Detected
 	return tags, nil
 }
 
-func (c *OCRClient) processURLOnce(ctx context.Context, photoURL string) ([]DetectedBIB, error) {
+func (c *BibOCRClient) processURLOnce(ctx context.Context, photoURL string) ([]DetectedBib, error) {
 	body, err := json.Marshal(processURLRequest{URL: photoURL})
 	if err != nil {
 		return nil, err
@@ -130,10 +122,10 @@ func (c *OCRClient) processURLOnce(ctx context.Context, photoURL string) ([]Dete
 		return nil, fmt.Errorf("photo bib service reported failure")
 	}
 
-	var out []DetectedBIB
+	var out []DetectedBib
 	for _, r := range parsed.BibResults {
 		for _, t := range r.Texts {
-			out = append(out, DetectedBIB{Text: t.Text, Confidence: t.Confidence})
+			out = append(out, DetectedBib{Text: t.Text, Confidence: t.Confidence})
 		}
 	}
 	return out, nil
