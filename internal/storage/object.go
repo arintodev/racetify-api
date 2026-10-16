@@ -49,4 +49,5 @@ type Object struct {
 	CreatedBy   string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+    Provider    string
 }

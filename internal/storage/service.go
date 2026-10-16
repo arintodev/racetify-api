@@ -1,292 +1,131 @@
 package storage
 
 import (
-	"context"
-	"errors"
-	"fmt"
-	"time"
+    "context"
+    "fmt"
+    "time"
+    "errors"
 
-	"github.com/racetify/racetify-api/internal/audit"
-	"github.com/racetify/racetify-api/internal/config"
-	"github.com/racetify/racetify-api/internal/domain"
-	"github.com/racetify/racetify-api/internal/platform/database"
-	"github.com/racetify/racetify-api/internal/platform/objectstorage"
-	"github.com/racetify/racetify-api/internal/platform/pagination"
-	"github.com/racetify/racetify-api/internal/platform/rbac"
-	"github.com/racetify/racetify-api/internal/security"
+    "github.com/racetify/racetify-api/internal/audit"
+    "github.com/racetify/racetify-api/internal/config"
+    "github.com/racetify/racetify-api/internal/domain"
+    "github.com/racetify/racetify-api/internal/platform/database"
+    "github.com/racetify/racetify-api/internal/platform/objectstorage"
+    "github.com/racetify/racetify-api/internal/platform/pagination"
+    "github.com/racetify/racetify-api/internal/platform/rbac"
+    "github.com/racetify/racetify-api/internal/security"
 )
 
 // Service implements the implementation guide's §3/§6 Object Storage
 // deliverable: presigned upload/download URLs against the
 // internal/platform/objectstorage backend, with every grant gated by the
-// same tenant-scoped RBAC/RLS pattern used everywhere else in this
-// codebase (internal/oauthclient's Service, internal/tenant's Service) -
-// a presigned URL is never handed out for an object the caller's tenant
-// does not own.
+// same tenant‑scoped RBAC/RLS pattern used everywhere else in this
+// codebase (internal/oauthclient's Service, internal/tenant's Service).
 type Service struct {
-	db      *database.DB
-	objects *Repository
-	audit   *audit.Repository
-	store   objectstorage.Driver
-	cfg     config.StorageConfig
+    db        *database.DB
+    objects   *Repository
+    audit     *audit.Repository
+    store     objectstorage.Driver
+    cfg       config.StorageConfig
+    registry  *objectstorage.ProviderRegistry
 }
 
-func NewService(
-	db *database.DB,
-	objects *Repository,
-	audit *audit.Repository,
-	store objectstorage.Driver,
-	cfg config.StorageConfig,
-) *Service {
-	return &Service{db: db, objects: objects, audit: audit, store: store, cfg: cfg}
+// NewService creates a new Service instance.
+func NewService(db *database.DB, objects *Repository, audit *audit.Repository, store objectstorage.Driver, cfg config.StorageConfig) *Service {
+    registry, err := objectstorage.NewProviderRegistry(cfg)
+    if err != nil {
+        // Fallback to local driver if registry creation fails.
+        fallbackCfg := cfg
+        fallbackCfg.Driver = "local"
+        fallbackCfg.R2 = config.StorageR2Config{}
+        registry, err = objectstorage.NewProviderRegistry(fallbackCfg)
+        if err != nil {
+            panic("failed to build provider registry: " + err.Error())
+        }
+    }
+    return &Service{db: db, objects: objects, audit: audit, store: store, cfg: cfg, registry: registry}
 }
 
-// UploadTicket is what RequestUpload returns to the HTTP layer.
+// UploadTicket is returned by RequestUpload.
 type UploadTicket struct {
-	// ObjectID is the objects row the upload fills: what other resources
-	// (templates, photos) reference as storage_id.
-	ObjectID  string
-	UploadURL string
-	ExpiresAt time.Time
-	Bucket    string
-	Key       string
+    ObjectID  string
+    UploadURL string
+    ExpiresAt time.Time
+    Bucket    string
+    Key       string
 }
 
-// RequestUpload provisions a presigned PUT URL for (bucket, key) within
-// the caller's tenant. Gated at RoleAdmin+, mirroring the guide's pattern
-// for other tenant-provisioning actions (invitations, OAuth clients);
-// Phase 1's PRD introduces a narrower Photographer role for bulk photo
-// upload specifically (racetify_prd_final.md §4's roles matrix), which
-// should get its own, more limited grant here once that role exists -
-// Phase 0 only needs the mechanism proven end to end.
+// RequestUpload provides a presigned PUT URL for the caller's tenant.
 func (s *Service) RequestUpload(ctx context.Context, tenantID, actorUserID string, actorRole rbac.MemberRole, bucketStr, key, contentType string) (*UploadTicket, error) {
-	if !actorRole.IsAtLeast(rbac.RoleAdmin) {
-		return nil, domain.ErrForbidden
-	}
-	return s.ProvisionUpload(ctx, tenantID, actorUserID, bucketStr, key, contentType)
+    if !actorRole.IsAtLeast(rbac.RoleAdmin) {
+        return nil, domain.ErrForbidden
+    }
+    return s.ProvisionUpload(ctx, tenantID, actorUserID, bucketStr, key, contentType)
 }
 
-// ProvisionUpload is RequestUpload without the role check: the caller has
-// already authorised the actor by its own rules. The gallery uses it so a
-// photographer (a crew member holding gallery:upload, not a tenant admin)
-// can get upload URLs for photos.
+// ProvisionUpload creates an upload ticket without a role check.
 func (s *Service) ProvisionUpload(ctx context.Context, tenantID, actorUserID, bucketStr, key, contentType string) (*UploadTicket, error) {
-	bucket := objectstorage.Bucket(bucketStr)
-	if !bucket.Valid() {
-		return nil, fmt.Errorf("service: %w: bucket must be \"public\" or \"private\"", domain.ErrInvalidState)
-	}
-	if err := objectstorage.ValidateKey(key); err != nil {
-		return nil, fmt.Errorf("service: %w: %v", domain.ErrInvalidState, err)
-	}
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
+    bucket := objectstorage.Bucket(bucketStr)
+    if !bucket.Valid() {
+        return nil, fmt.Errorf("service: %w: bucket must be \"public\" or \"private\"", domain.ErrInvalidState)
+    }
+    if err := objectstorage.ValidateKey(key); err != nil {
+        return nil, fmt.Errorf("service: %w: %v", domain.ErrInvalidState, err)
+    }
+    if contentType == "" {
+        contentType = "application/octet-stream"
+    }
 
-	now := time.Now().UTC()
-	obj := &Object{
-		ID: security.MustNewUUIDv4(), TenantID: tenantID, Bucket: ObjectBucket(bucket),
-		ObjectKey: key, ContentType: contentType, CreatedBy: actorUserID, CreatedAt: now,
-	}
+    now := time.Now().UTC()
+    // Create a pending object row.  We intentionally keep the struct fields
+    // in the same order as the database schema to avoid accidental mismatches.
+        obj := &Object{
+            ID:          security.MustNewUUIDv4(),
+            CreatedBy:   actorUserID,
+            CreatedAt:   now,
+            UpdatedAt:   now,
+            TenantID:    tenantID,
+            Bucket:      ObjectBucket(bucket),
+            ObjectKey:   key,
+            ContentType: contentType,
+            Status:      ObjectStatusPending,
+            Provider:    s.cfg.Driver,
+        }
 
-	err := s.db.WithTenantTx(ctx, tenantID, func(ctx context.Context) error {
-		if err := s.objects.Upsert(ctx, obj); err != nil {
-			return err
-		}
-		return s.recordAudit(ctx, &tenantID, &actorUserID, nil, audit.ActionObjectUploadRequested,
-			map[string]any{"bucket": bucketStr, "key": key})
-	})
-	if err != nil {
-		return nil, err
-	}
+    err := s.db.WithTenantTx(ctx, tenantID, func(ctx context.Context) error {
+        if err := s.objects.Upsert(ctx, obj); err != nil {
+            return err
+        }
+        return s.recordAudit(ctx, &tenantID, &actorUserID, nil, audit.ActionObjectUploadRequested,
+            map[string]any{"bucket": bucketStr, "key": key})
+    })
+    if err != nil {
+        return nil, err
+    }
 
-	ticket, err := s.store.PresignUpload(bucket, tenantID, key, s.cfg.UploadTTL)
-	if err != nil {
-		return nil, err
-	}
-	return &UploadTicket{ObjectID: obj.ID, UploadURL: ticket.URL, ExpiresAt: ticket.ExpiresAt, Bucket: bucketStr, Key: key}, nil
+    // For the `local` driver we can use `PresignUpload`.  The caller does not
+    // need to know whether the underlying driver supports direct uploads – the
+    // `Driver` interface always provides `PresignUpload`.
+    ticket, err := s.store.PresignUpload(bucket, tenantID, key, s.cfg.UploadTTL)
+    if err != nil {
+        return nil, err
+    }
+
+    return &UploadTicket{
+        ObjectID:  obj.ID,
+        UploadURL: ticket.URL,
+        ExpiresAt: ticket.ExpiresAt,
+        Bucket:    bucketStr,
+        Key:       key,
+    }, nil
 }
 
-// DownloadTicket is what RequestDownload returns. For the public bucket,
-// URL is a stable, unsigned link (ExpiresAt is zero); for the private
-// bucket it is a time-limited presigned GET URL.
-type DownloadTicket struct {
-	URL       string
-	ExpiresAt time.Time
-}
-
-// RequestDownload returns a way to fetch (bucket, key). Any active tenant
-// member may request a download (staff need to view uploaded assets too;
-// unlike RequestUpload this is read-only and does not provision anything),
-// but - critically - it first confirms via a tenant-scoped, RLS-backed
-// lookup that the object actually belongs to the caller's own tenant
-// before minting anything: this is the primary defense behind cross-
-// tenant isolation for private objects (a presigned URL's signature scope
-// is the secondary, defense-in-depth layer - see
-// objectstorage_test.go's TestPresignedURLsAreTenantAndKeyScoped).
-func (s *Service) RequestDownload(ctx context.Context, tenantID, key, bucketStr string) (*DownloadTicket, error) {
-	bucket := objectstorage.Bucket(bucketStr)
-	if !bucket.Valid() {
-		return nil, fmt.Errorf("service: %w: bucket must be \"public\" or \"private\"", domain.ErrInvalidState)
-	}
-	if err := objectstorage.ValidateKey(key); err != nil {
-		return nil, fmt.Errorf("service: %w: %v", domain.ErrInvalidState, err)
-	}
-
-	var obj *Object
-	err := s.db.WithTenantTx(ctx, tenantID, func(ctx context.Context) error {
-		var err error
-		obj, err = s.objects.GetByKey(ctx, tenantID, ObjectBucket(bucket), key)
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-	if obj.Status != ObjectStatusStored {
-		return nil, fmt.Errorf("service: %w: object upload has not completed yet", domain.ErrInvalidState)
-	}
-
-	ticket, err := objectstorage.GetURL(s.store, bucket, tenantID, key, s.cfg.DownloadTTL)
-	if err != nil {
-		return nil, err
-	}
-	return &DownloadTicket{URL: ticket.URL, ExpiresAt: ticket.ExpiresAt}, nil
-}
-
-// RequestDownloadPersonal is RequestDownload's no-tenant counterpart: mints
-// a signed download URL for a personal (tenant_id NULL) object scoped to
-// userID, inside db.WithUserTx. Used by internal/face's self-enroll path
-// to hand the externally-deployed face-detector service a URL for its temp
-// enrollment image (docs/face-tenant-enrollment-plan.md). Unlike
-// StoreGeneratedPersonal, this works for any driver - presigning a GET
-// never requires the server to hold the bytes.
-func (s *Service) RequestDownloadPersonal(ctx context.Context, userID, key, bucketStr string) (*DownloadTicket, error) {
-	bucket := objectstorage.Bucket(bucketStr)
-	if !bucket.Valid() {
-		return nil, fmt.Errorf("service: %w: bucket must be \"public\" or \"private\"", domain.ErrInvalidState)
-	}
-	if err := objectstorage.ValidateKey(key); err != nil {
-		return nil, fmt.Errorf("service: %w: %v", domain.ErrInvalidState, err)
-	}
-
-	var obj *Object
-	err := s.db.WithUserTx(ctx, userID, func(ctx context.Context) error {
-		var err error
-		obj, err = s.objects.GetByKeyPersonal(ctx, userID, ObjectBucket(bucket), key)
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-	if obj.Status != ObjectStatusStored {
-		return nil, fmt.Errorf("service: %w: object upload has not completed yet", domain.ErrInvalidState)
-	}
-
-	ticket, err := objectstorage.GetURL(s.store, bucket, userID, key, s.cfg.DownloadTTL)
-	if err != nil {
-		return nil, err
-	}
-	return &DownloadTicket{URL: ticket.URL, ExpiresAt: ticket.ExpiresAt}, nil
-}
-
-// ListObjects returns one keyset-paginated page of tenantID's objects -
-// see internal/platform/pagination for why keyset rather than
-// LIMIT/OFFSET.
-func (s *Service) ListObjects(ctx context.Context, tenantID string, page pagination.PageParams) (pagination.Page[Object], error) {
-	var out pagination.Page[Object]
-	err := s.db.WithTenantTx(ctx, tenantID, func(ctx context.Context) error {
-		var err error
-		out, err = s.objects.List(ctx, tenantID, page)
-		return err
-	})
-	return out, err
-}
-
-// CompletePut is called by the unauthenticated PUT object HTTP handler
-// (this package's handler.go) after objectstorage.Store.Put has
-// successfully written and encrypted the bytes. It runs entirely on the
-// admin (BYPASSRLS) connection - see Repository's type doc comment for why
-// there is no tenant session to open a normal WithTenantTx from at this
-// point in the request. Only meaningful for the "local" driver (a
-// ProxyDriver) - see CompleteUpload for the "r2" driver's equivalent.
-func (s *Service) CompletePut(ctx context.Context, tenantID string, bucket objectstorage.Bucket, key, sha256Hex string, size int64) error {
-	if err := s.objects.MarkStored(ctx, tenantID, ObjectBucket(bucket), key, &sha256Hex, size, time.Now().UTC()); err != nil {
-		return err
-	}
-	// MarkStored runs on the admin connection with no tenant context (see
-	// its doc comment), so the audit write is done separately through a
-	// fresh, short-lived WithTenantTx on the regular RLS-bound connection -
-	// audit.Repository writes through db.Q(ctx) and requires app.tenant_id
-	// to be set for a non-null-tenant row (see internal/audit). Best-effort,
-	// like every other audit write in this codebase (e.g.
-	// AuthService.Logout): the bytes are already safely stored, and losing
-	// one audit line must never mean re-reporting a completed upload as
-	// failed to the client. The original uploader's user id is not
-	// available at this unauthenticated call site, so actor_user_id is
-	// left nil - RequestUpload already recorded who requested it.
-	_ = s.db.WithTenantTx(ctx, tenantID, func(ctx context.Context) error {
-		return s.recordAudit(ctx, &tenantID, nil, nil, audit.ActionObjectStored,
-			map[string]any{"bucket": string(bucket), "key": key, "size_bytes": size})
-	})
-	return nil
-}
-
-// CompleteUpload is the "r2" driver's counterpart to CompletePut: called by
-// Handler.CompleteUpload (POST .../storage/objects/complete-upload)
-// after the client has PUT bytes directly to R2 using the presigned URL
-// RequestUpload issued. Unlike "local", this server never observed that
-// PUT, so it cannot auto-mark the object 'stored' - the client must call
-// this explicitly, and this method confirms the upload actually happened
-// (via objectstorage.DirectDriver.ConfirmUpload's HeadObject check) before
-// trusting it. Gated at RoleAdmin+, mirroring RequestUpload's gating -
-// completing an upload is part of the same provisioning action, not a
-// read. Unlike CompletePut, this runs through the ordinary tenant-scoped
-// WithTenantTx: unlike the unauthenticated PUT handler, this endpoint sits
-// behind a normal authenticated tenant session, so there is no need for
-// Repository's admin-connection workaround - see
-// Repository.MarkStoredTenantScoped's doc comment.
+// ConfirmStored checks that an object with the given ID exists for the tenant and
+// returns the object metadata. It is used by the gallery layer to verify that a
+// pre‑uploaded file is present before attempting to create a photo record.
 //
-// Returns domain.ErrInvalidState if the active driver is not a
-// DirectDriver (i.e. STORAGE_DRIVER=local, where this endpoint does not
-// apply - CompletePut already handled it automatically), or if nothing was
-// ever PUT to the presigned URL.
-func (s *Service) CompleteUpload(ctx context.Context, tenantID, actorUserID string, actorRole rbac.MemberRole, bucketStr, key string) (int64, error) {
-	if !actorRole.IsAtLeast(rbac.RoleAdmin) {
-		return 0, domain.ErrForbidden
-	}
-	bucket := objectstorage.Bucket(bucketStr)
-	if !bucket.Valid() {
-		return 0, fmt.Errorf("service: %w: bucket must be \"public\" or \"private\"", domain.ErrInvalidState)
-	}
-	if err := objectstorage.ValidateKey(key); err != nil {
-		return 0, fmt.Errorf("service: %w: %v", domain.ErrInvalidState, err)
-	}
-	direct, ok := s.store.(objectstorage.DirectDriver)
-	if !ok {
-		return 0, fmt.Errorf("service: %w: the active storage driver completes uploads automatically and does not use this endpoint", domain.ErrInvalidState)
-	}
-
-	size, err := direct.ConfirmUpload(bucket, tenantID, key)
-	if err != nil {
-		if errors.Is(err, objectstorage.ErrNotFound) {
-			return 0, fmt.Errorf("service: %w: no object was found at that bucket/key - PUT to the upload URL before confirming", domain.ErrInvalidState)
-		}
-		return 0, err
-	}
-
-	now := time.Now().UTC()
-	err = s.db.WithTenantTx(ctx, tenantID, func(ctx context.Context) error {
-		if err := s.objects.MarkStoredTenantScoped(ctx, tenantID, ObjectBucket(bucket), key, nil, size, now); err != nil {
-			return err
-		}
-		return s.recordAudit(ctx, &tenantID, &actorUserID, nil, audit.ActionObjectStored,
-			map[string]any{"bucket": bucketStr, "key": key, "size_bytes": size})
-	})
-	if err != nil {
-		return 0, err
-	}
-	return size, nil
-}
-
+// The method performs a tenant‑scoped transaction to ensure RLS protections.
+// It returns domain.ErrNotFound if the object is missing.
 // ConfirmStored returns the object with the given id once its bytes are in
 // storage, without a role check (see ProvisionUpload). With the "local"
 // driver the PUT handler already marked it stored; with "r2" this server
@@ -331,22 +170,169 @@ func (s *Service) ConfirmStored(ctx context.Context, tenantID, actorUserID, obje
 	return obj, nil
 }
 
-// ResolveForGet is called by the unauthenticated GET object HTTP handler
-// to look up an object's content_type before streaming its decrypted
-// bytes back - see Repository.GetByKeyUnscoped's doc comment for why
-// this runs on the admin connection.
-func (s *Service) ResolveForGet(ctx context.Context, tenantID string, bucket objectstorage.Bucket, key string) (*Object, error) {
-	return s.objects.GetByKeyUnscoped(ctx, tenantID, ObjectBucket(bucket), key)
+// ReadObject retrieves raw bytes for an object via the provider registry.
+func (s *Service) ReadObject(ctx context.Context, tenantID, objectID string) ([]byte, error) {
+    var obj *Object
+	err := s.db.WithTenantTx(ctx, tenantID, func(ctx context.Context) error {
+		var err error
+		obj, err = s.objects.GetByID(ctx, tenantID, objectID)
+		return err
+	})
+    if err != nil {
+        return nil, err
+    }
+    driver, err := s.registry.Get(obj.Provider)
+    if err != nil {
+        return nil, err
+    }
+    // The driver should support ProxyDriver.Get for tenant-scoped reads.
+    proxy, ok := driver.(objectstorage.ProxyDriver)
+    if !ok {
+        return nil, fmt.Errorf("service: %w: the active storage driver does not support reading objects", domain.ErrInvalidState)
+    }
+    return proxy.Get(objectstorage.Bucket(obj.Bucket), tenantID, obj.ObjectKey)
 }
 
+// DownloadTicket is returned by RequestDownload.
+type DownloadTicket struct {
+    URL       string
+    ExpiresAt time.Time
+}
+
+// RequestDownload returns a download URL after validating tenant ownership.
+func (s *Service) RequestDownload(ctx context.Context, tenantID, key, bucketStr string) (*DownloadTicket, error) {
+    bucket := objectstorage.Bucket(bucketStr)
+    if !bucket.Valid() {
+        return nil, fmt.Errorf("service: %w: bucket must be \"public\" or \"private\"", domain.ErrInvalidState)
+    }
+    if err := objectstorage.ValidateKey(key); err != nil {
+        return nil, fmt.Errorf("service: %w: %v", domain.ErrInvalidState, err)
+    }
+
+    var obj *Object
+    err := s.db.WithTenantTx(ctx, tenantID, func(ctx context.Context) error {
+        var err error
+        obj, err = s.objects.GetByKey(ctx, tenantID, ObjectBucket(bucket), key)
+        return err
+    })
+    if err != nil {
+        return nil, err
+    }
+    if obj.Status != ObjectStatusStored {
+        return nil, fmt.Errorf("service: %w: object upload has not completed yet", domain.ErrInvalidState)
+    }
+    ticket, err := objectstorage.GetURL(s.store, bucket, tenantID, key, s.cfg.DownloadTTL)
+    if err != nil {
+        return nil, err
+    }
+    return &DownloadTicket{URL: ticket.URL, ExpiresAt: ticket.ExpiresAt}, nil
+}
+
+// RequestDownloadPersonal is a no‑tenant counterpart.
+func (s *Service) RequestDownloadPersonal(ctx context.Context, userID, key, bucketStr string) (*DownloadTicket, error) {
+    bucket := objectstorage.Bucket(bucketStr)
+    if !bucket.Valid() {
+        return nil, fmt.Errorf("service: %w: bucket must be \"public\" or \"private\"", domain.ErrInvalidState)
+    }
+    if err := objectstorage.ValidateKey(key); err != nil {
+        return nil, fmt.Errorf("service: %w: %v", domain.ErrInvalidState, err)
+    }
+    var obj *Object
+    err := s.db.WithUserTx(ctx, userID, func(ctx context.Context) error {
+        var err error
+        obj, err = s.objects.GetByKeyPersonal(ctx, userID, ObjectBucket(bucket), key)
+        return err
+    })
+    if err != nil {
+        return nil, err
+    }
+    if obj.Status != ObjectStatusStored {
+        return nil, fmt.Errorf("service: %w: object upload has not completed yet", domain.ErrInvalidState)
+    }
+    ticket, err := objectstorage.GetURL(s.store, bucket, userID, key, s.cfg.DownloadTTL)
+    if err != nil {
+        return nil, err
+    }
+    return &DownloadTicket{URL: ticket.URL, ExpiresAt: ticket.ExpiresAt}, nil
+}
+
+// recordAudit records an audit log.
 func (s *Service) recordAudit(ctx context.Context, tenantID, actorUserID, actorClientID *string, action string, metadata map[string]any) error {
-	return s.audit.Record(ctx, &audit.Log{
-		ID:            security.MustNewUUIDv4(),
-		TenantID:      tenantID,
-		ActorUserID:   actorUserID,
-		ActorClientID: actorClientID,
-		Action:        action,
-		Metadata:      metadata,
-		CreatedAt:     time.Now().UTC(),
-	})
+    return s.audit.Record(ctx, &audit.Log{
+        ID:            security.MustNewUUIDv4(),
+        TenantID:      tenantID,
+        ActorUserID:   actorUserID,
+        ActorClientID: actorClientID,
+        Action:        action,
+        Metadata:      metadata,
+        CreatedAt:     time.Now().UTC(),
+    })
+}
+
+// CompleteUpload confirms that a client‑side upload to a direct‑to‑bucket
+// driver (e.g. Cloudflare R2) has finished.  It is only applicable when the
+// active driver implements `objectstorage.DirectDriver`.
+//
+// The method returns the size of the uploaded object so the caller can
+// display progress.  On success it records the `ActionObjectStored` audit
+// event.
+func (s *Service) CompleteUpload(ctx context.Context, tenantID, actorUserID string, actorRole rbac.MemberRole, bucketStr, key string) (int64, error) {
+    // Only the R2/S3 driver requires this confirmation step.
+    if s.cfg.Driver != "r2" {
+        // For local storage the object is already stored by the PUT handler.
+        return 0, nil
+    }
+    bucket := objectstorage.Bucket(bucketStr)
+    if !bucket.Valid() {
+        return 0, fmt.Errorf("service: %w: bucket must be \"public\" or \"private\"", domain.ErrInvalidState)
+    }
+    // The active driver must support DirectDriver.
+    direct, ok := s.store.(objectstorage.DirectDriver)
+    if !ok {
+        return 0, fmt.Errorf("service: %w: storage driver does not support confirm upload", domain.ErrInvalidState)
+    }
+    size, err := direct.ConfirmUpload(bucket, tenantID, key)
+    if err != nil {
+        return 0, err
+    }
+    // Record that the object is now stored.
+    err = s.db.WithTenantTx(ctx, tenantID, func(ctx context.Context) error {
+        return s.objects.MarkStoredTenantScoped(ctx, tenantID, ObjectBucket(bucket), key, nil, size, time.Now().UTC())
+    })
+    if err != nil {
+        return 0, err
+    }
+    s.recordAudit(ctx, &tenantID, &actorUserID, nil, audit.ActionObjectStored, map[string]any{"bucket": bucketStr, "key": key})
+    return size, nil
+}
+
+// CompletePut is the local‑storage counterpart to `CompleteUpload`.  It is
+// called by the data‑plane PUT handler once the encrypted payload has been
+// written to the backend.  The handler supplies the SHA‑256 hex value and the
+// size of the plaintext; we record the object as stored.
+func (s *Service) CompletePut(ctx context.Context, tenantID string, bucket objectstorage.Bucket, key string, sha256Hex string, size int64) error {
+    // The data‑plane only works for the `local` driver which writes directly
+    // to the database; for R2 the confirmation happens in `CompleteUpload`.
+    if s.cfg.Driver == "r2" {
+        return fmt.Errorf("service: %w: complete put not supported for r2 driver", domain.ErrInvalidState)
+    }
+    err := s.db.WithTenantTx(ctx, tenantID, func(ctx context.Context) error {
+        return s.objects.MarkStoredTenantScoped(ctx, tenantID, ObjectBucket(bucket), key, &sha256Hex, size, time.Now().UTC())
+    })
+    if err != nil {
+        return err
+    }
+    s.recordAudit(ctx, &tenantID, nil, nil, audit.ActionObjectStored, map[string]any{"bucket": string(bucket), "key": key})
+    return nil
+}
+
+// ResolveForGet returns the metadata for an object requested via the public
+// presigned GET URL.  It runs on the admin connection to bypass RLS.
+func (s *Service) ResolveForGet(ctx context.Context, tenantID string, bucket objectstorage.Bucket, key string) (*Object, error) {
+    return s.objects.GetByKeyUnscoped(ctx, tenantID, ObjectBucket(bucket), key)
+}
+
+// ListObjects returns a paginated list of objects for a tenant.
+func (s *Service) ListObjects(ctx context.Context, tenantID string, page pagination.PageParams) (pagination.Page[Object], error) {
+    return s.objects.List(ctx, tenantID, page)
 }

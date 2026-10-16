@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"time"
 
@@ -44,33 +43,9 @@ func (s *Service) directWriter() (objectstorage.DirectWriter, error) {
 	return w, nil
 }
 
-// ReadObject returns the bytes of a stored object of the tenant, by object id.
-func (s *Service) ReadObject(ctx context.Context, tenantID, objectID string) ([]byte, error) {
-	proxy, err := s.proxy()
-	if err != nil {
-		return nil, err
-	}
-	var obj *Object
-	err = s.db.WithTenantTx(ctx, tenantID, func(ctx context.Context) error {
-		var err error
-		obj, err = s.objects.GetByID(ctx, tenantID, objectID)
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-	if obj.Status != ObjectStatusStored {
-		return nil, fmt.Errorf("service: %w: the upload has not completed yet", domain.ErrInvalidState)
-	}
-	data, err := proxy.Get(objectstorage.Bucket(obj.Bucket), tenantID, obj.ObjectKey)
-	if err != nil {
-		if errors.Is(err, objectstorage.ErrNotFound) {
-			return nil, domain.ErrNotFound
-		}
-		return nil, err
-	}
-	return data, nil
-}
+// The ReadObject method has been moved to the main service implementation
+// (internal/storage/service.go).  Keep this file focused on proxy/direct
+// writer helpers only.
 
 // StoreGenerated writes bytes the server made itself (a print file) to
 // (bucket, key) and registers them as a stored object of the tenant.
@@ -91,10 +66,11 @@ func (s *Service) StoreGenerated(ctx context.Context, tenantID, actorUserID, buc
 		return nil, err
 	}
 	now := time.Now().UTC()
-	obj := &Object{
-		ID: security.MustNewUUIDv4(), TenantID: tenantID, Bucket: ObjectBucket(bucket),
-		ObjectKey: key, ContentType: contentType, CreatedBy: actorUserID, CreatedAt: now,
-	}
+    obj := &Object{
+        ID: security.MustNewUUIDv4(), TenantID: tenantID, Bucket: ObjectBucket(bucket),
+        ObjectKey: key, ContentType: contentType, CreatedBy: actorUserID, CreatedAt: now,
+        Provider: s.cfg.Driver,
+    }
 	err = s.db.WithTenantTx(ctx, tenantID, func(ctx context.Context) error {
 		if err := s.objects.Upsert(ctx, obj); err != nil {
 			return err
@@ -148,10 +124,11 @@ func (s *Service) StoreGeneratedDirect(ctx context.Context, tenantID, actorUserI
 		return nil, err
 	}
 	now := time.Now().UTC()
-	obj := &Object{
-		ID: security.MustNewUUIDv4(), TenantID: tenantID, Bucket: ObjectBucket(bucket),
-		ObjectKey: key, ContentType: contentType, CreatedBy: actorUserID, CreatedAt: now,
-	}
+    obj := &Object{
+        ID: security.MustNewUUIDv4(), TenantID: tenantID, Bucket: ObjectBucket(bucket),
+        ObjectKey: key, ContentType: contentType, CreatedBy: actorUserID, CreatedAt: now,
+        Provider: s.cfg.Driver,
+    }
 	err = s.db.WithTenantTx(ctx, tenantID, func(ctx context.Context) error {
 		if err := s.objects.Upsert(ctx, obj); err != nil {
 			return err
@@ -177,10 +154,11 @@ func (s *Service) StoreGeneratedPersonal(ctx context.Context, userID, bucketStr,
 		return nil, err
 	}
 	now := time.Now().UTC()
-	obj := &Object{
-		ID: security.MustNewUUIDv4(), Bucket: ObjectBucket(bucket),
-		ObjectKey: key, ContentType: contentType, CreatedBy: userID, CreatedAt: now,
-	}
+    obj := &Object{
+        ID: security.MustNewUUIDv4(), Bucket: ObjectBucket(bucket),
+        ObjectKey: key, ContentType: contentType, CreatedBy: userID, CreatedAt: now,
+        Provider: s.cfg.Driver,
+    }
 	err = s.db.WithUserTx(ctx, userID, func(ctx context.Context) error {
 		if err := s.objects.UpsertPersonal(ctx, obj); err != nil {
 			return err

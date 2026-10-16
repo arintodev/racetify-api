@@ -1,20 +1,24 @@
 package objectstorage
 
 import (
-	"bytes"
-	"context"
-	"errors"
-	"fmt"
-	"strings"
-	"time"
+    "bytes"
+    "context"
+    "crypto/sha256"
+    "errors"
+    "fmt"
+    "io"
+    "net/http"
+    "strings"
+    "time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
-	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	smithy "github.com/aws/smithy-go"
-	smithyhttp "github.com/aws/smithy-go/transport/http"
+    "github.com/aws/aws-sdk-go-v2/aws"
+    v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+    "github.com/aws/aws-sdk-go-v2/credentials"
+    "github.com/aws/aws-sdk-go-v2/service/s3"
+    "github.com/aws/aws-sdk-go-v2/service/s3/types"
+    smithy "github.com/aws/smithy-go"
+    smithyhttp "github.com/aws/smithy-go/transport/http"
+    // removed to avoid import cycle
 )
 
 // r2PublicURLFallbackTTL is how long a PublicURL presigned GET is valid
@@ -209,6 +213,71 @@ func (d *r2Driver) ConfirmUpload(bucket Bucket, tenantID, key string) (int64, er
 		return 0, nil
 	}
 	return *out.ContentLength, nil
+}
+
+// ---------------------------------------------------------------------------
+// ProxyDriver implementation for r2Driver
+// ---------------------------------------------------------------------------
+
+// VerifySignature is a no‑op for R2 because the presigned URL already
+// contains a valid signature and an expiration. The server never inspects
+// the signature itself, so we simply return nil.
+func (d *r2Driver) VerifySignature(method string, bucket Bucket, tenantID, key string, expiresUnix int64, sig string) error {
+    return nil
+}
+
+// Put encrypts the data (to keep the same API contract as local) and then
+// delegates to the DirectDriver's PutDirect. The caller does not need the
+// ciphertext, only the SHA‑256 of the plaintext, which we compute.
+func (d *r2Driver) Put(bucket Bucket, tenantID, key string, data []byte) (sha256Hex string, size int64, err error) {
+    // Compute SHA‑256 of the plaintext.
+    h := sha256.New()
+    if _, err = h.Write(data); err != nil {
+        return "", 0, fmt.Errorf("objectstorage: compute SHA‑256: %w", err)
+    }
+    sha256Hex = fmt.Sprintf("%x", h.Sum(nil))
+    // Write the data using the direct PUT.
+    if err = d.PutDirect(bucket, tenantID, key, data); err != nil {
+        return sha256Hex, 0, err
+    }
+    size = int64(len(data))
+    return sha256Hex, size, nil
+}
+
+// Get retrieves the object by confirming it exists and then issuing an HTTP
+// GET to a presigned URL.  If the object does not exist, ConfirmUpload will
+// return ErrNotFound and we propagate that error.
+func (d *r2Driver) Get(bucket Bucket, tenantID, key string) ([]byte, error) {
+    // Confirm the object exists.
+    if _, err := d.ConfirmUpload(bucket, tenantID, key); err != nil {
+        return nil, err
+    }
+    // Generate a short‑lived GET URL.
+    ticket, err := d.PresignDownload(bucket, tenantID, key, 15*time.Minute)
+    if err != nil {
+        return nil, err
+    }
+    if ticket.URL == "" {
+        return nil, ErrNotFound
+    }
+    resp, err := http.Get(ticket.URL)
+    if err != nil {
+        return nil, fmt.Errorf("objectstorage: GET %s: %w", ticket.URL, err)
+    }
+    defer resp.Body.Close()
+    if resp.StatusCode != http.StatusOK {
+        return nil, fmt.Errorf("objectstorage: GET %s returned %d", ticket.URL, resp.StatusCode)
+    }
+    data, err := io.ReadAll(resp.Body)
+    if err != nil {
+        return nil, fmt.Errorf("objectstorage: read GET body: %w", err)
+    }
+    return data, nil
+}
+
+// Delete delegates to the DirectDriver's DeleteDirect.
+func (d *r2Driver) Delete(bucket Bucket, tenantID, key string) error {
+    return d.DeleteDirect(bucket, tenantID, key)
 }
 
 // PutDirect writes data straight to the R2 bucket using this driver's own

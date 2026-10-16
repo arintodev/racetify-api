@@ -101,7 +101,7 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 	limiter := ratelimit.NewLimiter(redisClient)
 
 	objectStore, err := objectstorage.NewDriver(objectstorage.Config{
-		Driver:           cfg.Storage.Driver,
+        Driver:           cfg.Storage.Driver,
 		RootDir:          cfg.Storage.RootDir,
 		PresignSecret:    cfg.Storage.PresignSecret,
 		EncryptionKeyHex: cfg.Storage.EncryptionKeyHex,
@@ -119,7 +119,7 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 		appDB.Close()
 		adminDB.Close()
 		redisClient.Close()
-		return nil, fmt.Errorf("app: init object storage (driver=%q): %w", cfg.Storage.Driver, err)
+        return nil, fmt.Errorf("app: init object storage (driver=%q): %w", cfg.Storage.Driver, err)
 	}
 
 	authService := auth.NewService(appDB, authRepo, auditRepo, tokens, redisClient, mail, cfg.Auth, tenants)

@@ -40,7 +40,7 @@ func main() {
 	}
 	defer db.Close()
 
-	vars, err := migrationVars(cfg.DB, cfg.Storage.Driver)
+    vars, err := migrationVars(cfg.DB, cfg.Storage.Driver)
 	if err != nil {
 		log.Fatalf("migrate: %v", err)
 	}

@@ -41,26 +41,25 @@ func NewRepository(db, adminDB *database.DB) *Repository {
 	return &Repository{db: db, adminDB: adminDB}
 }
 
-const objectColumns = `id, tenant_id, bucket, object_key, content_type, size_bytes, sha256, status, created_by, created_at, updated_at`
+const objectColumns = `id, tenant_id, bucket, object_key, content_type, size_bytes, sha256, status, created_by, created_at, updated_at, provider`
 
 // Upsert creates a new 'pending' object row, or resets an existing one
 // back to 'pending' if the same (tenant, bucket, key) was already
 // uploaded before (see 0004_object_storage.up.sql's unique constraint doc
 // comment: a re-upload reuses the row rather than accumulating orphans).
 func (r *Repository) Upsert(ctx context.Context, o *Object) error {
-	row := r.db.Q(ctx).QueryRowContext(ctx, `
-		INSERT INTO objects (id, tenant_id, bucket, object_key, content_type, size_bytes, sha256, status, created_by, created_at, updated_at)
-		VALUES ($1, NULLIF($2,'')::uuid, $3, $4, $5, 0, NULL, 'pending', NULLIF($6,'')::uuid, $7, $7)
-		ON CONFLICT (tenant_id, bucket, object_key) DO UPDATE SET
-			content_type = EXCLUDED.content_type,
-			size_bytes = 0,
-			sha256 = NULL,
-			status = 'pending',
-			created_by = EXCLUDED.created_by,
-			updated_at = EXCLUDED.updated_at
-		RETURNING id`,
-		o.ID, o.TenantID, o.Bucket, o.ObjectKey, o.ContentType, o.CreatedBy, o.CreatedAt,
-	)
+    row := r.db.Q(ctx).QueryRowContext(ctx, `
+        INSERT INTO objects (id, tenant_id, bucket, object_key, content_type, size_bytes, sha256, status, created_by, created_at, updated_at, provider)
+        VALUES ($1, $2, $3, $4, $5, 0, NULL, 'pending', $6, $7, $7, $8)
+        ON CONFLICT (tenant_id, bucket, object_key) DO UPDATE SET
+            content_type = EXCLUDED.content_type,
+            size_bytes = 0,
+            sha256 = NULL,
+            status = 'pending',
+            updated_at = EXCLUDED.updated_at
+        RETURNING id`,
+        o.ID, o.TenantID, o.Bucket, o.ObjectKey, o.ContentType, o.CreatedBy, o.CreatedAt, o.Provider,
+    )
 	return row.Scan(&o.ID)
 }
 
@@ -69,18 +68,18 @@ func (r *Repository) Upsert(ctx context.Context, o *Object) error {
 // objects_personal_bucket_key_uk (migrations/0023) rather than the
 // tenant-scoped unique index, which never matches a NULL tenant_id.
 func (r *Repository) UpsertPersonal(ctx context.Context, o *Object) error {
-	row := r.db.Q(ctx).QueryRowContext(ctx, `
-		INSERT INTO objects (id, tenant_id, bucket, object_key, content_type, size_bytes, sha256, status, created_by, created_at, updated_at)
-		VALUES ($1, NULL, $2, $3, $4, 0, NULL, 'pending', $5, $6, $6)
-		ON CONFLICT (created_by, bucket, object_key) WHERE tenant_id IS NULL DO UPDATE SET
-			content_type = EXCLUDED.content_type,
-			size_bytes = 0,
-			sha256 = NULL,
-			status = 'pending',
-			updated_at = EXCLUDED.updated_at
-		RETURNING id`,
-		o.ID, o.Bucket, o.ObjectKey, o.ContentType, o.CreatedBy, o.CreatedAt,
-	)
+    row := r.db.Q(ctx).QueryRowContext(ctx, `
+        INSERT INTO objects (id, tenant_id, bucket, object_key, content_type, size_bytes, sha256, status, created_by, created_at, updated_at, provider)
+        VALUES ($1, NULL, $2, $3, $4, 0, NULL, 'pending', $5, $6, $6, $7)
+        ON CONFLICT (tenant_id, bucket, object_key) WHERE tenant_id IS NULL DO UPDATE SET
+            content_type = EXCLUDED.content_type,
+            size_bytes = 0,
+            sha256 = NULL,
+            status = 'pending',
+            updated_at = EXCLUDED.updated_at
+        RETURNING id`,
+        o.ID, o.Bucket, o.ObjectKey, o.ContentType, o.CreatedBy, o.CreatedAt, o.Provider,
+    )
 	return row.Scan(&o.ID)
 }
 
@@ -246,10 +245,10 @@ func (r *Repository) DeletePersonal(ctx context.Context, userID string, bucket O
 func scanObject(row dbutil.RowScanner) (*Object, error) {
 	o := &Object{}
 	var tenantID, createdBy sql.NullString
-	err := row.Scan(
-		&o.ID, &tenantID, &o.Bucket, &o.ObjectKey, &o.ContentType, &o.SizeBytes, &o.SHA256,
-		&o.Status, &createdBy, &o.CreatedAt, &o.UpdatedAt,
-	)
+    err := row.Scan(
+        &o.ID, &tenantID, &o.Bucket, &o.ObjectKey, &o.ContentType, &o.SizeBytes, &o.SHA256,
+        &o.Status, &createdBy, &o.CreatedAt, &o.UpdatedAt, &o.Provider,
+    )
 	if err != nil {
 		return nil, dbutil.MapNotFound(err)
 	}

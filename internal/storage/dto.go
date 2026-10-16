@@ -12,6 +12,7 @@ type ObjectDTO struct {
 	Status      string    `json:"status"`
 	CreatedBy   string    `json:"created_by"`
 	CreatedAt   time.Time `json:"created_at"`
+    Provider    string    `json:"provider"`
 }
 
 func objectResponse(o *Object) ObjectDTO {
@@ -19,6 +20,7 @@ func objectResponse(o *Object) ObjectDTO {
 		ID: o.ID, Bucket: string(o.Bucket), Key: o.ObjectKey, ContentType: o.ContentType,
 		SizeBytes: o.SizeBytes, SHA256: o.SHA256, Status: string(o.Status),
 		CreatedBy: o.CreatedBy, CreatedAt: o.CreatedAt,
+        Provider: o.Provider,
 	}
 }
 

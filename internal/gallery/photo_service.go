@@ -64,9 +64,6 @@ func (s *Service) RequestUploadURLs(ctx context.Context, tenantID, eventID, albu
 	if len(entries) > MaxBatch {
 		return nil, invalid("files", fmt.Sprintf("at most %d files per request.", MaxBatch))
 	}
-	if !isUUID(albumID) {
-		return nil, domain.ErrNotFound
-	}
 	names := make([]string, len(entries))
 	sizes := make([]int64, len(entries))
 	for i, e := range entries {
@@ -188,7 +185,6 @@ func (s *Service) CompleteUploads(ctx context.Context, tenantID, eventID, albumI
 			objects[i] = obj
 		}
 	}
-
 	created := 0
 	createdPhotoIDs := make([]string, 0, len(items))
 	err := s.db.WithTenantTx(ctx, tenantID, func(ctx context.Context) error {

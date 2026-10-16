@@ -1,13 +1,13 @@
 package gallery
 
 import (
-	"errors"
-	"net/http"
-	"slices"
+    "errors"
+    "net/http"
+    "slices"
 
-	"github.com/racetify/racetify-api/internal/httpapi/reqctx"
-	"github.com/racetify/racetify-api/internal/httpapi/respond"
-	"github.com/racetify/racetify-api/internal/platform/rbac"
+    "github.com/racetify/racetify-api/internal/httpapi/reqctx"
+    "github.com/racetify/racetify-api/internal/httpapi/respond"
+    "github.com/racetify/racetify-api/internal/platform/rbac"
 )
 
 // Capabilities that admit an external crew member to the gallery (mirror
@@ -72,30 +72,30 @@ func requireAnyGalleryCapability(next http.HandlerFunc) http.HandlerFunc {
 
 // UploadURLs handles POST /events/{id}/albums/{aid}/photos/upload-urls.
 func (h *Handler) UploadURLs(w http.ResponseWriter, r *http.Request) {
-	tenantID, _, _ := actor(r)
-	userID, _ := reqctx.UserID(r.Context())
-	var req uploadURLsRequest
-	if !respond.DecodeJSON(w, r, &req) {
-		return
-	}
-	entries := make([]UploadEntry, len(req.Files))
-	for i, f := range req.Files {
-		entries[i] = UploadEntry{Filename: f.Filename, OriginalSize: f.OriginalSize}
-	}
-	results, err := h.svc.RequestUploadURLs(r.Context(), tenantID, r.PathValue("id"), r.PathValue("aid"), userID, entries)
+    tenantID, _, _ := actor(r)
+    userID, _ := reqctx.UserID(r.Context())
+    var req uploadURLsRequest
+    if !respond.DecodeJSON(w, r, &req) {
+        return
+    }
+    entries := make([]UploadEntry, len(req.Files))
+    for i, f := range req.Files {
+        entries[i] = UploadEntry{Filename: f.Filename, OriginalSize: f.OriginalSize}
+    }
+    results, err := h.svc.RequestUploadURLs(r.Context(), tenantID, r.PathValue("id"), r.PathValue("aid"), userID, entries)
 	if err != nil {
-		fail(w, err)
-		return
-	}
-	out := make([]UploadURLDTO, len(results))
-	for i, res := range results {
-		out[i] = UploadURLDTO{Filename: entries[i].Filename, StorageID: res.StorageID, UploadURL: res.UploadURL, Skipped: res.Skipped}
-		if !res.ExpiresAt.IsZero() {
-			exp := res.ExpiresAt
-			out[i].ExpiresAt = &exp
-		}
-	}
-	respond.JSON(w, http.StatusOK, respond.ListResponseDTO[UploadURLDTO]{Items: out})
+        fail(w, err)
+        return
+    }
+    out := make([]UploadURLDTO, len(results))
+    for i, res := range results {
+        out[i] = UploadURLDTO{Filename: entries[i].Filename, StorageID: res.StorageID, UploadURL: res.UploadURL, Skipped: res.Skipped}
+        if !res.ExpiresAt.IsZero() {
+            exp := res.ExpiresAt
+            out[i].ExpiresAt = &exp
+        }
+    }
+    respond.JSON(w, http.StatusOK, respond.ListResponseDTO[UploadURLDTO]{Items: out})
 }
 
 // Complete handles POST /events/{id}/albums/{aid}/photos/complete.
