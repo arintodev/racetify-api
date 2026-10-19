@@ -48,6 +48,26 @@ func NewService(db *database.DB, repo *Repository, audit *audit.Repository, obje
     return &Service{db: db, repo: repo, audit: audit, storage: objects, store: store, cfg: cfg, queue: queue, watermarks: watermarks}
 }
 
+// --- Wrapper helpers -------------------------------------------------------
+
+// InsertOCRTag forwards the call to the underlying repository. It is used by
+// the BIB‑OCR detection job to persist tags. The method is intentionally
+// thin – it exists only to keep repository fields unexported.
+func (s *Service) InsertOCRTag(ctx context.Context, tenantID string, t *Tag, bibNumber *int) error {
+    return s.repo.InsertOCRTag(ctx, tenantID, t, bibNumber)
+}
+
+// SetOCRStatus updates a photo's OCR status. It is exposed for callers such as
+// the detection job that need to mark a photo as processed.
+func (s *Service) SetOCRStatus(ctx context.Context, tenantID, photoID, status string) error {
+    return s.repo.SetOCRStatus(ctx, tenantID, photoID, status)
+}
+
+// SetOCRFailed marks a photo's OCR pass as failed with an error message.
+func (s *Service) SetOCRFailed(ctx context.Context, tenantID, photoID, errMsg string) error {
+    return s.repo.SetOCRFailed(ctx, tenantID, photoID, errMsg)
+}
+
 func (s *Service) recordAudit(ctx context.Context, tenantID, actorUserID, action string, metadata map[string]any) error {
 	return s.audit.Record(ctx, &audit.Log{
 		ID:          security.MustNewUUIDv4(),
