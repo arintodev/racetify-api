@@ -132,10 +132,10 @@ func (s *Service) detectPhoto(ctx context.Context, tenantID, eventID, photoID st
 			if err := s.repo.InsertDetection(ctx, d); err != nil {
 				return err
 			}
-			if err := s.qdrant.Upsert(ctx, qdrantstore.Point{
-				ID: pointID, Vector: f.Embedding,
-				Payload: qdrantstore.Payload{TenantID: tenantID, EventID: eventID, Source: sourceDetection, PhotoID: photoID},
-			}); err != nil {
+    if err := s.qdrantDetection.Upsert(ctx, qdrantstore.Point{
+        ID: pointID, Vector: f.Embedding,
+        Payload: qdrantstore.DetectionPayload{TenantID: tenantID, EventID: eventID, PhotoID: photoID},
+    }); err != nil {
 				return err
 			}
 		}

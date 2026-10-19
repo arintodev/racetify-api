@@ -53,8 +53,11 @@ func New(cfg Config) *Store {
 		base = "http://" + base
 	}
 	return &Store{
-		baseURL:    strings.TrimRight(base, "/"),
-		apiKey:     cfg.APIKey,
+		baseURL: strings.TrimRight(base, "/"),
+		apiKey:  cfg.APIKey,
+		// Qdrantstore.New is used to create a Store for a specific collection.
+		// The config may provide either CollectionDetection or CollectionEnrollment
+		// (only one will be non-empty when this constructor is called).
 		collection: cfg.CollectionName,
 		// Cloud Run-hosted dependencies elsewhere in this feature (the
 		// face-embed service) need a generous timeout for cold starts;
@@ -71,9 +74,11 @@ func New(cfg Config) *Store {
 // PhotoID) each only carry what applies to them, matching
 // docs/face-search-plan.md's Qdrant payload section.
 type Point struct {
-	ID      string
-	Vector  []float32
-	Payload Payload
+	ID     string
+	Vector []float32
+	// Payload holds the metadata for the point. It can be a DetectionPayload
+	// or an EnrollmentPayload depending on the collection.
+	Payload any
 }
 
 // Payload is a point's filterable metadata. TenantID/EventID/Source are
@@ -81,18 +86,18 @@ type Point struct {
 // for source="enrollment" points - see docs/face-search-plan.md's Qdrant
 // section for why detection points never carry FaceID/UserID (there is no
 // clustering step that would assign them).
-type Payload struct {
+type DetectionPayload struct {
 	TenantID string `json:"tenant_id,omitempty"`
 	EventID  string `json:"event_id,omitempty"`
-	Source   string `json:"source"` // "detection" | "enrollment"
 	PhotoID  string `json:"photo_id,omitempty"`
+}
+
+// Payload for the enrollment collection
+type EnrollmentPayload struct {
+	TenantID string `json:"tenant_id,omitempty"`
 	UserID   string `json:"user_id,omitempty"`
-	// RefID is a tenant's own opaque identifier for an enrollment point
-	// (docs/face-tenant-enrollment-plan.md) - metadata only, never
-	// filtered on at search time (only TenantID/EventID/Source are, and
-	// those come from the detection side for a Search call).
-	RefID  string `json:"ref_id,omitempty"`
-	FaceID string `json:"face_id,omitempty"`
+	FaceID   string `json:"face_id,omitempty"`
+	RefID    string `json:"ref_id,omitempty"`
 }
 
 // SearchResult is one match from Search: a point id, its payload (so the
@@ -100,7 +105,7 @@ type Payload struct {
 type SearchResult struct {
 	ID      string
 	Score   float64
-	Payload Payload
+	Payload map[string]any
 }
 
 // Filter narrows Search/Delete to points matching every non-empty field
@@ -185,9 +190,9 @@ func (s *Store) Search(ctx context.Context, vector []float32, filter Filter, lim
 	}
 	var parsed struct {
 		Result []struct {
-			ID      string  `json:"id"`
-			Score   float64 `json:"score"`
-			Payload Payload `json:"payload"`
+			ID      string         `json:"id"`
+			Score   float64        `json:"score"`
+			Payload map[string]any `json:"payload"`
 		} `json:"result"`
 	}
 	if err := json.Unmarshal(resp, &parsed); err != nil {
@@ -236,19 +241,32 @@ func (s *Store) Delete(ctx context.Context, pointIDs []string) error {
 	return nil
 }
 
-func payloadMap(p Payload) map[string]any {
-	m := map[string]any{"tenant_id": p.TenantID, "event_id": p.EventID, "source": p.Source}
-	if p.PhotoID != "" {
-		m["photo_id"] = p.PhotoID
-	}
-	if p.UserID != "" {
-		m["user_id"] = p.UserID
-	}
-	if p.RefID != "" {
-		m["ref_id"] = p.RefID
-	}
-	if p.FaceID != "" {
-		m["face_id"] = p.FaceID
+func payloadMap(p any) map[string]any {
+	m := make(map[string]any)
+	switch v := p.(type) {
+	case DetectionPayload:
+		if v.TenantID != "" {
+			m["tenant_id"] = v.TenantID
+		}
+		if v.EventID != "" {
+			m["event_id"] = v.EventID
+		}
+		if v.PhotoID != "" {
+			m["photo_id"] = v.PhotoID
+		}
+	case EnrollmentPayload:
+		if v.TenantID != "" {
+			m["tenant_id"] = v.TenantID
+		}
+		if v.UserID != "" {
+			m["user_id"] = v.UserID
+		}
+		if v.RefID != "" {
+			m["ref_id"] = v.RefID
+		}
+		if v.FaceID != "" {
+			m["face_id"] = v.FaceID
+		}
 	}
 	return m
 }

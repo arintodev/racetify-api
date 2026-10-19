@@ -139,16 +139,28 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 	galleryService := gallery.NewService(appDB, gallery.NewRepository(appDB), auditRepo, storageService, objectStore, cfg.Storage, jobQueue, watermarkRepo)
 	eventService := event.NewService(appDB, events, auditRepo, authRepo, mail, cfg.Auth, tenants)
 	portalService := portal.NewService(appDB, eventService, portal.NewRepository(appDB), certificateRepo, certificateService, galleryService)
-	qdrantStore := qdrantstore.New(qdrantstore.Config{
-		Addr: cfg.Qdrant.Addr, APIKey: cfg.Qdrant.APIKey, CollectionName: cfg.Qdrant.CollectionName,
+	qdrantStoreDetection := qdrantstore.New(qdrantstore.Config{
+		Addr:           cfg.Qdrant.Addr,
+		APIKey:         cfg.Qdrant.APIKey,
+		CollectionName: cfg.Qdrant.CollectionDetection,
 	})
-	if err := qdrantStore.EnsureCollection(ctx, face.EmbeddingDimension); err != nil {
-		log.Warn("app: qdrant collection not ready - face search will fail until this is resolved", "error", err)
-	}
+	qdrantStoreEnrollment := qdrantstore.New(qdrantstore.Config{
+		Addr:           cfg.Qdrant.Addr,
+		APIKey:         cfg.Qdrant.APIKey,
+		CollectionName: cfg.Qdrant.CollectionEnrollment,
+	})
+// Ensure detection collection exists
+    if err := qdrantStoreDetection.EnsureCollection(ctx, face.EmbeddingDimension); err != nil {
+        log.Warn("app: qdrant detection collection not ready - face search will fail until this is resolved", "error", err)
+    }
+    // Ensure enrollment collection exists
+    if err := qdrantStoreEnrollment.EnsureCollection(ctx, face.EmbeddingDimension); err != nil {
+        log.Warn("app: qdrant enrollment collection not ready - face search will fail until this is resolved", "error", err)
+    }
 	bibOCRCclient := bibdetect.NewBibOCRClient(cfg.BibOCR.ServiceURL, cfg.BibOCR.ServiceKey, cfg.BibOCR.RequestTimeout)
 	bibDetectService := bibdetect.NewService(appDB, bibdetect.NewRepository(appDB), storageService, bibOCRCclient, galleryService, jobQueue)
 	faceEmbedClient := face.NewEmbedClient(cfg.FaceEmbed.ServiceURL, cfg.FaceEmbed.ServiceKey, cfg.FaceEmbed.RequestTimeout)
-	faceService := face.NewService(appDB, face.NewRepository(appDB), auditRepo, storageService, qdrantStore, faceEmbedClient, galleryService, jobQueue)
+	faceService := face.NewService(appDB, face.NewRepository(appDB), auditRepo, storageService, qdrantStoreDetection, qdrantStoreEnrollment, faceEmbedClient, galleryService, jobQueue)
 	bibPrintService := bibprint.NewService(appDB, jobQueue, auditRepo, templateService, participantService, storageService, fontService)
 
 	return &App{

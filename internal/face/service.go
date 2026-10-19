@@ -3,6 +3,7 @@ package face
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -35,24 +36,29 @@ const (
 // constant to enqueue the detection job, from internal/domain, not this
 // package - see gallery/photo_service.go's CompleteUploads).
 type Service struct {
-	db      *database.DB
-	repo    *Repository
-	audit   *audit.Repository
-	storage *storage.Service
-	qdrant  *qdrantstore.Store
-	embed   *EmbedClient
-	gallery *gallery.Service
-	// queue enqueues media.face_detect jobs. Nil is tolerated the same way
-	// gallery.Service.queue is - a caller that only needs read paths (some
-	// tests) just gets no job enqueued.
-	queue *jobqueue.Queue
+	db               *database.DB
+	repo             *Repository
+	audit            *audit.Repository
+	storage          *storage.Service
+	qdrantDetection  *qdrantstore.Store
+	qdrantEnrollment *qdrantstore.Store
+	embed            *EmbedClient
+	gallery          *gallery.Service
+	queue            *jobqueue.Queue
 }
 
 func NewService(db *database.DB, repo *Repository, auditRepo *audit.Repository, storageService *storage.Service,
-	qdrant *qdrantstore.Store, embed *EmbedClient, galleryService *gallery.Service, queue *jobqueue.Queue) *Service {
+	detectionStore *qdrantstore.Store, enrollmentStore *qdrantstore.Store, embed *EmbedClient, galleryService *gallery.Service, queue *jobqueue.Queue) *Service {
 	return &Service{
-		db: db, repo: repo, audit: auditRepo, storage: storageService,
-		qdrant: qdrant, embed: embed, gallery: galleryService, queue: queue,
+		db:               db,
+		repo:             repo,
+		audit:            auditRepo,
+		storage:          storageService,
+		qdrantDetection:  detectionStore,
+		qdrantEnrollment: enrollmentStore,
+		embed:            embed,
+		gallery:          galleryService,
+		queue:            queue,
 	}
 }
 
@@ -80,6 +86,13 @@ func (s *Service) recordAudit(ctx context.Context, tenantID, actorUserID, actorC
 // the best candidate" shape gallery's OCR auto-threshold uses, rather than
 // rejecting the upload outright.
 func (s *Service) detectBestFace(ctx context.Context, photoURL string) (*DetectedFace, error) {
+	// Guard against a missing FACE_EMBED_SERVICE_URL. If the client is not
+	// configured, return a clear error instead of panicking or returning
+	// an ambiguous "no faces detected" message.
+	if !s.embed.Configured() {
+		return nil, fmt.Errorf("face: face‑embed service URL is not configured")
+	}
+
 	faces, err := s.embed.DetectAndEmbed(ctx, "enroll-"+security.MustNewUUIDv4(), photoURL)
 	if err != nil {
 		return nil, err
@@ -113,7 +126,7 @@ func (s *Service) tempUploadOwn(ctx context.Context, userID string, imageBytes [
 	if _, err := s.storage.StoreGeneratedPersonal(ctx, userID, string(storage.ObjectBucketPrivate), key, http.DetectContentType(imageBytes), imageBytes); err != nil {
 		return "", nil, err
 	}
-	cleanup = func() { _ = s.storage.DeletePersonal(context.Background(), userID, string(storage.ObjectBucketPrivate), key) }
+	cleanup = func() { _ = s.storage.DeletePersonal(ctx, userID, string(storage.ObjectBucketPrivate), key) }
 	ticket, err := s.storage.RequestDownloadPersonal(ctx, userID, key, string(storage.ObjectBucketPrivate))
 	if err != nil {
 		cleanup()
@@ -133,7 +146,7 @@ func (s *Service) tempUploadByRef(ctx context.Context, tenantID string, imageByt
 	if _, err := s.storage.StoreGeneratedDirect(ctx, tenantID, "", string(storage.ObjectBucketPrivate), key, http.DetectContentType(imageBytes), imageBytes); err != nil {
 		return "", nil, err
 	}
-	cleanup = func() { _ = s.storage.DeleteGenerated(context.Background(), tenantID, string(storage.ObjectBucketPrivate), key) }
+	cleanup = func() { _ = s.storage.DeleteGenerated(ctx, tenantID, string(storage.ObjectBucketPrivate), key) }
 	ticket, err := s.storage.RequestDownload(ctx, tenantID, key, string(storage.ObjectBucketPrivate))
 	if err != nil {
 		cleanup()
@@ -199,9 +212,9 @@ func (s *Service) Enroll(ctx context.Context, userID, actorUserID string, imageB
 		}
 		face.EmbeddingCount++
 
-		if err := s.qdrant.Upsert(ctx, qdrantstore.Point{
+		if err := s.qdrantEnrollment.Upsert(ctx, qdrantstore.Point{
 			ID: pointID, Vector: best.Embedding,
-			Payload: qdrantstore.Payload{Source: sourceEnrollment, UserID: userID, FaceID: face.ID},
+			Payload: qdrantstore.EnrollmentPayload{UserID: userID, FaceID: face.ID},
 		}); err != nil {
 			return err
 		}
@@ -272,9 +285,9 @@ func (s *Service) EnrollByRef(ctx context.Context, tenantID, refID, actorClientI
 		}
 		face.EmbeddingCount++
 
-		if err := s.qdrant.Upsert(ctx, qdrantstore.Point{
+		if err := s.qdrantEnrollment.Upsert(ctx, qdrantstore.Point{
 			ID: pointID, Vector: best.Embedding,
-			Payload: qdrantstore.Payload{TenantID: tenantID, Source: sourceEnrollment, RefID: refID, FaceID: face.ID},
+			Payload: qdrantstore.EnrollmentPayload{TenantID: tenantID, RefID: refID, FaceID: face.ID},
 		}); err != nil {
 			return err
 		}
@@ -358,7 +371,7 @@ func (s *Service) dropFace(ctx context.Context, faceID string, ownerCheck func(*
 	// call in this package (qdrantstore.Store.do's doc comment) - a
 	// failure here leaves orphaned Qdrant points (harmless, since nothing
 	// in Postgres references them any more) rather than blocking the drop.
-	return s.qdrant.Delete(ctx, pointIDs)
+	return s.qdrantEnrollment.Delete(ctx, pointIDs)
 }
 
 // DropOwnFace hard-deletes actorUserID's own global face - the faces row,
@@ -430,19 +443,25 @@ func (s *Service) Search(ctx context.Context, tenantID, eventID, faceID string, 
 		if err != nil {
 			continue // a missing/unreadable point should not fail the whole search
 		}
-		results, err := s.qdrant.Search(ctx, vector,
-			qdrantstore.Filter{TenantID: tenantID, EventID: eventID, Source: sourceDetection}, searchResultLimit)
+		results, err := s.qdrantDetection.Search(ctx, vector, qdrantstore.Filter{TenantID: tenantID, EventID: eventID}, searchResultLimit)
 		if err != nil {
 			return pagination.Page[gallery.Photo]{}, err
 		}
-		for _, r := range results {
-			if r.Score < SimilarityThreshold || r.Payload.PhotoID == "" {
-				continue
-			}
-			if cur, ok := bestScore[r.Payload.PhotoID]; !ok || r.Score > cur {
-				bestScore[r.Payload.PhotoID] = r.Score
-			}
-		}
+    for _, r := range results {
+        // Qdrant returns payload fields as a generic map[string]any.
+        // The photo identifier is stored under the key "photo_id".
+        // The original code attempted to access r.Payload.PhotoID which
+        // does not exist on a map, causing a compiler error. We now
+        // safely extract the value, ensuring it is a string and
+        // non‑empty before using it.
+        photoIDVal, ok := r.Payload["photo_id"].(string)
+        if !ok || photoIDVal == "" {
+            continue
+        }
+        if cur, ok := bestScore[photoIDVal]; !ok || r.Score > cur {
+            bestScore[photoIDVal] = r.Score
+        }
+    }
 	}
 	if len(bestScore) == 0 {
 		return pagination.Page[gallery.Photo]{}, nil
@@ -460,7 +479,7 @@ func (s *Service) Search(ctx context.Context, tenantID, eventID, faceID string, 
 // is stored there) - this is fine since a query vector is only ever needed
 // at search time, for a user's own small number of enrolled embeddings.
 func (s *Service) pointVector(ctx context.Context, pointID string) ([]float32, error) {
-	return s.qdrant.GetVector(ctx, pointID)
+	return s.qdrantDetection.GetVector(ctx, pointID)
 }
 
 // PhotoResponse exposes gallery.Service.PhotoResponse to face.Handler,

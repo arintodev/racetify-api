@@ -188,7 +188,8 @@ type StorageConfig struct {
 type QdrantConfig struct {
 	Addr           string
 	APIKey         string
-	CollectionName string
+	CollectionDetection string
+    CollectionEnrollment string
 }
 
 // FaceEmbedConfig points at the face-embedding microservice
@@ -310,7 +311,8 @@ func Load() (*Config, error) {
 		Qdrant: QdrantConfig{
 			Addr:           getEnv("QDRANT_ADDR", "localhost:6333"),
 			APIKey:         getEnv("QDRANT_API_KEY", ""),
-			CollectionName: getEnv("QDRANT_FACE_COLLECTION", "face_points"),
+			CollectionDetection: getEnv("QDRANT_COLLECTION_DETECTION", "face_detection"),
+    		CollectionEnrollment: getEnv("QDRANT_COLLECTION_ENROLLMENT", "face_enrollment"),
 		},
 		FaceEmbed: FaceEmbedConfig{
 			ServiceURL:     getEnv("FACE_EMBED_SERVICE_URL", ""),
