@@ -103,7 +103,7 @@ func NewRouter(d Deps) http.Handler {
 	tenant.RegisterRoutes(mux, mw, d.Tenants, origins)
 	oauthclient.RegisterRoutes(mux, mw, d.OAuthClient, d.RateLimiter)
 	storage.RegisterRoutes(mux, mw, d.Storage, d.ObjectStore)
-	event.RegisterRoutes(mux, mw, d.Events, origins)
+    event.RegisterRoutes(mux, mw, d.Events, origins, d.Storage)
 	// One unauthenticated "what is this invite for?" lookup across workspace and event invitations.
 	invitepreview.RegisterRoutes(mux, mw, d.Tenants, d.Events)
 	participant.RegisterRoutes(mux, mw, d.Participants, d.Events)

@@ -1,12 +1,12 @@
 package event
-
 import (
-	"net/http"
+    "net/http"
 
-	"github.com/racetify/racetify-api/internal/httpapi/middleware"
-	"github.com/racetify/racetify-api/internal/httpapi/routing"
-	"github.com/racetify/racetify-api/internal/oauthclient"
-	"github.com/racetify/racetify-api/internal/platform/originpolicy"
+    "github.com/racetify/racetify-api/internal/httpapi/middleware"
+    "github.com/racetify/racetify-api/internal/httpapi/routing"
+    "github.com/racetify/racetify-api/internal/platform/originpolicy"
+    "github.com/racetify/racetify-api/internal/storage"
+    "github.com/racetify/racetify-api/internal/oauthclient"
 )
 
 // RegisterRoutes wires the tenant-scoped Event/Race CRUD endpoints and
@@ -14,8 +14,8 @@ import (
 // mw.RequireAdminRole/RequireAnyRole are built in router.go from
 // tenant.RequireRole(tenant.RoleAdmin/RoleStaff) - this package does not
 // import internal/tenant directly, matching §9's import-direction note.
-func RegisterRoutes(mux *http.ServeMux, mw routing.Middlewares, svc *Service, origins *originpolicy.Policy) {
-	h := NewHandler(svc, origins)
+func RegisterRoutes(mux *http.ServeMux, mw routing.Middlewares, svc *Service, origins *originpolicy.Policy, storageSvc *storage.Service) {
+    h := NewHandler(svc, origins, storageSvc)
 
 	// ---- user-session authenticated, tenant-scoped ----
 	mux.Handle("POST /api/v1/events", routing.Chain(h.Create, mw.RequireAdminRole, mw.RequireTenantForUser, mw.RequireUserAuth))
@@ -49,7 +49,13 @@ func RegisterRoutes(mux *http.ServeMux, mw routing.Middlewares, svc *Service, or
 	mux.Handle("POST /api/v1/events/invitations/accept", routing.Chain(h.AcceptEventInvitation, mw.RequireUserAuth))
 	mux.Handle("GET /api/v1/me/event-assignments", routing.Chain(h.MyEventAssignments, mw.RequireUserAuth))
 
-	// ---- M2M, read-only ----
+    // ---- Logo / Thumbnail upload helpers ----
+    mux.Handle("POST /api/v1/events/{id}/logo/upload-url", routing.Chain(h.LogoUploadURL, mw.RequireAdminRole, mw.RequireTenantForUser, mw.RequireUserAuth))
+    mux.Handle("POST /api/v1/events/{id}/thumbnail/upload-url", routing.Chain(h.ThumbnailUploadURL, mw.RequireAdminRole, mw.RequireTenantForUser, mw.RequireUserAuth))
+    mux.Handle("PATCH /api/v1/events/{id}/logo", routing.Chain(h.UpdateLogo, mw.RequireAdminRole, mw.RequireTenantForUser, mw.RequireUserAuth))
+    mux.Handle("PATCH /api/v1/events/{id}/thumbnail", routing.Chain(h.UpdateThumbnail, mw.RequireAdminRole, mw.RequireTenantForUser, mw.RequireUserAuth))
+
+    // ---- M2M, read-only ----
 	mux.Handle("GET /api/v1/m2m/events", routing.Chain(
 		h.List,
 		middleware.RequireScope(oauthclient.ScopeEventsRead),
