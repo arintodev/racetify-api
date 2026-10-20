@@ -13,6 +13,7 @@ import (
 
 	"github.com/racetify/racetify-api/internal/audit"
 	"github.com/racetify/racetify-api/internal/auth"
+	"github.com/racetify/racetify-api/internal/bibdetect"
 	"github.com/racetify/racetify-api/internal/bibprint"
 	"github.com/racetify/racetify-api/internal/certificate"
 	"github.com/racetify/racetify-api/internal/config"
@@ -36,7 +37,6 @@ import (
 	"github.com/racetify/racetify-api/internal/storage"
 	"github.com/racetify/racetify-api/internal/tenant"
 	"github.com/racetify/racetify-api/internal/watermark"
-	"github.com/racetify/racetify-api/internal/bibdetect"
 )
 
 // App bundles the router with the resources Build opened, so the caller
@@ -101,7 +101,7 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 	limiter := ratelimit.NewLimiter(redisClient)
 
 	objectStore, err := objectstorage.NewDriver(objectstorage.Config{
-        Driver:           cfg.Storage.Driver,
+		Driver:           cfg.Storage.Driver,
 		RootDir:          cfg.Storage.RootDir,
 		PresignSecret:    cfg.Storage.PresignSecret,
 		EncryptionKeyHex: cfg.Storage.EncryptionKeyHex,
@@ -119,7 +119,7 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 		appDB.Close()
 		adminDB.Close()
 		redisClient.Close()
-        return nil, fmt.Errorf("app: init object storage (driver=%q): %w", cfg.Storage.Driver, err)
+		return nil, fmt.Errorf("app: init object storage (driver=%q): %w", cfg.Storage.Driver, err)
 	}
 
 	authService := auth.NewService(appDB, authRepo, auditRepo, tokens, redisClient, mail, cfg.Auth, tenants)
@@ -138,7 +138,6 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 	watermarkService := watermark.NewService(appDB, watermarkRepo, auditRepo, objectStore, cfg.Storage)
 	galleryService := gallery.NewService(appDB, gallery.NewRepository(appDB), auditRepo, storageService, objectStore, cfg.Storage, jobQueue, watermarkRepo)
 	eventService := event.NewService(appDB, events, auditRepo, authRepo, mail, cfg.Auth, tenants)
-	portalService := portal.NewService(appDB, eventService, portal.NewRepository(appDB), certificateRepo, certificateService, galleryService)
 	qdrantStoreDetection := qdrantstore.New(qdrantstore.Config{
 		Addr:           cfg.Qdrant.Addr,
 		APIKey:         cfg.Qdrant.APIKey,
@@ -149,18 +148,19 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 		APIKey:         cfg.Qdrant.APIKey,
 		CollectionName: cfg.Qdrant.CollectionEnrollment,
 	})
-// Ensure detection collection exists
-    if err := qdrantStoreDetection.EnsureCollection(ctx, face.EmbeddingDimension); err != nil {
-        log.Warn("app: qdrant detection collection not ready - face search will fail until this is resolved", "error", err)
-    }
-    // Ensure enrollment collection exists
-    if err := qdrantStoreEnrollment.EnsureCollection(ctx, face.EmbeddingDimension); err != nil {
-        log.Warn("app: qdrant enrollment collection not ready - face search will fail until this is resolved", "error", err)
-    }
-	bibOCRCclient := bibdetect.NewBibOCRClient(cfg.BibOCR.ServiceURL, cfg.BibOCR.ServiceKey, cfg.BibOCR.RequestTimeout)
-	bibDetectService := bibdetect.NewService(appDB, bibdetect.NewRepository(appDB), storageService, bibOCRCclient, galleryService, jobQueue)
 	faceEmbedClient := face.NewEmbedClient(cfg.FaceEmbed.ServiceURL, cfg.FaceEmbed.ServiceKey, cfg.FaceEmbed.RequestTimeout)
 	faceService := face.NewService(appDB, face.NewRepository(appDB), auditRepo, storageService, qdrantStoreDetection, qdrantStoreEnrollment, faceEmbedClient, galleryService, jobQueue)
+	portalService := portal.NewService(appDB, eventService, portal.NewRepository(appDB), certificateRepo, certificateService, galleryService, faceService)
+	// Ensure detection collection exists
+	if err := qdrantStoreDetection.EnsureCollection(ctx, face.EmbeddingDimension); err != nil {
+		log.Warn("app: qdrant detection collection not ready - face search will fail until this is resolved", "error", err)
+	}
+	// Ensure enrollment collection exists
+	if err := qdrantStoreEnrollment.EnsureCollection(ctx, face.EmbeddingDimension); err != nil {
+		log.Warn("app: qdrant enrollment collection not ready - face search will fail until this is resolved", "error", err)
+	}
+	bibOCRCclient := bibdetect.NewBibOCRClient(cfg.BibOCR.ServiceURL, cfg.BibOCR.ServiceKey, cfg.BibOCR.RequestTimeout)
+	bibDetectService := bibdetect.NewService(appDB, bibdetect.NewRepository(appDB), storageService, bibOCRCclient, galleryService, jobQueue)
 	bibPrintService := bibprint.NewService(appDB, jobQueue, auditRepo, templateService, participantService, storageService, fontService)
 
 	return &App{

@@ -1,21 +1,21 @@
 package face
 
 import (
-	"context"
-	"errors"
-	"fmt"
-	"net/http"
-	"time"
+    "context"
+    "errors"
+    "fmt"
+    "net/http"
+    "time"
 
-	"github.com/racetify/racetify-api/internal/audit"
-	"github.com/racetify/racetify-api/internal/domain"
-	"github.com/racetify/racetify-api/internal/gallery"
-	"github.com/racetify/racetify-api/internal/jobqueue"
-	"github.com/racetify/racetify-api/internal/platform/database"
-	"github.com/racetify/racetify-api/internal/platform/pagination"
-	"github.com/racetify/racetify-api/internal/platform/qdrantstore"
-	"github.com/racetify/racetify-api/internal/security"
-	"github.com/racetify/racetify-api/internal/storage"
+    "github.com/racetify/racetify-api/internal/audit"
+    "github.com/racetify/racetify-api/internal/domain"
+    "github.com/racetify/racetify-api/internal/gallery"
+    "github.com/racetify/racetify-api/internal/jobqueue"
+    "github.com/racetify/racetify-api/internal/platform/database"
+    "github.com/racetify/racetify-api/internal/platform/pagination"
+    "github.com/racetify/racetify-api/internal/platform/qdrantstore"
+    "github.com/racetify/racetify-api/internal/security"
+    "github.com/racetify/racetify-api/internal/storage"
 )
 
 // tempImageKey names a short-lived enrollment temp object - unique per
@@ -60,6 +60,21 @@ func NewService(db *database.DB, repo *Repository, auditRepo *audit.Repository, 
 		gallery:          galleryService,
 		queue:            queue,
 	}
+}
+
+// GetFace returns a Face by its ID.  This is a thin wrapper around the
+// underlying repository to expose the read‑only operation required by the
+// portal service.  The face.Service has no exported method originally, so
+// the portal layer couldn't call it directly.
+func (s *Service) GetFace(ctx context.Context, faceID string) (*Face, error) {
+	return s.repo.GetFace(ctx, faceID)
+}
+
+// GetFaceByUserID retrieves the face record associated with a Racetify user.
+// The face is uniquely identified by its UserID; there should be at most
+// one face per user.  This helper simply forwards to the repository.
+func (s *Service) GetFaceByUserID(ctx context.Context, userID string) (*Face, error) {
+    return s.repo.GetFaceByUserID(ctx, userID)
 }
 
 // recordAudit mirrors oauthclient.Service's own recordAudit shape: exactly
@@ -447,21 +462,21 @@ func (s *Service) Search(ctx context.Context, tenantID, eventID, faceID string, 
 		if err != nil {
 			return pagination.Page[gallery.Photo]{}, err
 		}
-    for _, r := range results {
-        // Qdrant returns payload fields as a generic map[string]any.
-        // The photo identifier is stored under the key "photo_id".
-        // The original code attempted to access r.Payload.PhotoID which
-        // does not exist on a map, causing a compiler error. We now
-        // safely extract the value, ensuring it is a string and
-        // non‑empty before using it.
-        photoIDVal, ok := r.Payload["photo_id"].(string)
-        if !ok || photoIDVal == "" {
-            continue
-        }
-        if cur, ok := bestScore[photoIDVal]; !ok || r.Score > cur {
-            bestScore[photoIDVal] = r.Score
-        }
-    }
+		for _, r := range results {
+			// Qdrant returns payload fields as a generic map[string]any.
+			// The photo identifier is stored under the key "photo_id".
+			// The original code attempted to access r.Payload.PhotoID which
+			// does not exist on a map, causing a compiler error. We now
+			// safely extract the value, ensuring it is a string and
+			// non‑empty before using it.
+			photoIDVal, ok := r.Payload["photo_id"].(string)
+			if !ok || photoIDVal == "" {
+				continue
+			}
+			if cur, ok := bestScore[photoIDVal]; !ok || r.Score > cur {
+				bestScore[photoIDVal] = r.Score
+			}
+		}
 	}
 	if len(bestScore) == 0 {
 		return pagination.Page[gallery.Photo]{}, nil

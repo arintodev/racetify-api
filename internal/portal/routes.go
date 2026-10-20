@@ -21,5 +21,6 @@ func RegisterRoutes(mux *http.ServeMux, mw routing.Middlewares, svc *Service) {
 
 	mux.Handle("GET /api/v1/public/events/{slug}/gallery/albums", routing.Chain(h.ListAlbums, limit))
 	mux.Handle("GET /api/v1/public/events/{slug}/gallery/photos", routing.Chain(h.SearchPhotos, limit))
+	mux.Handle("GET /api/v1/public/events/{slug}/gallery/photos/user-face", routing.Chain(h.SearchUserFace, limit))
 	mux.Handle("GET /api/v1/public/events/{slug}/gallery/albums/{aid}/photos", routing.Chain(h.ListAlbumPhotos, limit))
 }

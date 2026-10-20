@@ -51,6 +51,15 @@ func (r *Repository) GetFaceByUser(ctx context.Context, userID string) (*Face, e
 	return scanFace(row)
 }
 
+// GetFaceByUserID fetches a global face for a Racetify user by the user ID.
+// It is identical to GetFaceByUser but uses the same name to match the
+// Service's GetFaceByUserID helper. The implementation simply forwards to
+// GetFaceByUser; it remains public for potential callers that prefer the
+// explicit name.
+func (r *Repository) GetFaceByUserID(ctx context.Context, userID string) (*Face, error) {
+    return r.GetFaceByUser(ctx, userID)
+}
+
 // GetFaceByRef fetches a tenant's ref-based face, if one exists.
 func (r *Repository) GetFaceByRef(ctx context.Context, tenantID, refID string) (*Face, error) {
 	row := r.db.Q(ctx).QueryRowContext(ctx,

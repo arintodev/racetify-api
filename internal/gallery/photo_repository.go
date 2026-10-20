@@ -46,17 +46,17 @@ func DuplicateKey(name string, size int64) string { return fmt.Sprintf("%s|%d", 
 // upload was already completed (same stored object, or same file already in
 // the album), so completing twice is harmless.
 func (r *Repository) InsertPhoto(ctx context.Context, p *Photo, storageID string) (bool, error) {
-    // The photos table now has a unique constraint on original_storage_id to
-    // prevent duplicate uploads of the same file to an album.  We use that
-    // constraint for the ON CONFLICT clause so that race conditions do not
-    // create multiple photo rows for the same storage object.
-    res, err := r.db.Q(ctx).ExecContext(ctx, `
+	// The photos table now has a unique constraint on original_storage_id to
+	// prevent duplicate uploads of the same file to an album.  We use that
+	// constraint for the ON CONFLICT clause so that race conditions do not
+	// create multiple photo rows for the same storage object.
+	res, err := r.db.Q(ctx).ExecContext(ctx, `
         INSERT INTO photos (id, tenant_id, album_id, original_storage_id, ocr_status, created_by,
             original_filename, original_size, size, width, height, created_at, updated_at)
         VALUES ($1,$2,$3,$4,'pending',$5,$6,$7,$8,$9,$10,$11,$11)
         ON CONFLICT (original_storage_id) DO NOTHING`,
-        p.ID, p.TenantID, p.AlbumID, storageID, p.CreatedBy,
-        p.OriginalFilename, p.OriginalSize, p.Size, p.Width, p.Height, p.CreatedAt)
+		p.ID, p.TenantID, p.AlbumID, storageID, p.CreatedBy,
+		p.OriginalFilename, p.OriginalSize, p.Size, p.Width, p.Height, p.CreatedAt)
 	if err != nil {
 		return false, err
 	}
@@ -172,7 +172,9 @@ func (r *Repository) ListPhotos(ctx context.Context, tenantID, eventID string, f
 		where = append(where, `p.created_by = `+arg(f.UploaderID))
 	}
 	if f.BIB != "" {
-		where = append(where, `EXISTS (SELECT 1 FROM photo_tags pt WHERE pt.photo_id = p.id AND pt.bib_string = `+arg(f.BIB)+`)`)
+		bibStrArg := arg(f.BIB)
+		bibNumArg := arg(parseBibNumber(f.BIB))
+		where = append(where, `EXISTS (SELECT 1 FROM photo_tags pt WHERE pt.photo_id = p.id AND (pt.bib_string = `+bibStrArg+` OR pt.bib_number = `+bibNumArg+`))`)
 	}
 	if len(f.PhotoIDs) > 0 {
 		where = append(where, `p.id = ANY(`+arg(pq.Array(f.PhotoIDs))+`::uuid[])`)
