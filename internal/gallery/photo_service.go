@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"path"
 	"strings"
 	"time"
@@ -34,9 +35,12 @@ var acceptedTypes = map[string]string{
 // orphan behind for every retry.
 func objectKey(albumID, filename string, size int64) string {
 	sum := sha256.Sum256([]byte(DuplicateKey(filename, size)))
-	return fmt.Sprintf("%s%s%s", albumPrefix(albumID), hex.EncodeToString(sum[:12]), strings.ToLower(path.Ext(filename)))
+	return fmt.Sprintf("photos/%s/%s%s", albumID, hex.EncodeToString(sum[:12]), strings.ToLower(path.Ext(filename)))
 }
 
+// albumPrefix is a helper that returns the key prefix for an album.
+// It is used by ConfirmStored to validate that an object's key belongs
+// to the album it claims to belong to.
 func albumPrefix(albumID string) string { return "photos/" + albumID + "/" }
 
 // UploadEntry is one file a photographer wants to upload.
@@ -404,6 +408,9 @@ func (s *Service) PhotoURLs(p *Photo) (preview, original string, err error) {
 	thumb, err := objectstorage.GetURL(s.store, objectstorage.Bucket(*p.ThumbBucket), p.TenantID, *p.ThumbKey, s.cfg.DownloadTTL)
 	if err != nil {
 		return "", "", err
+	}
+	if p.ID == "aa638d4e-4180-4790-b9c6-1ca92e6e1aef" {
+		slog.Info("ini foto public", "data", thumb, "bucket", objectstorage.Bucket(*p.ThumbBucket))
 	}
 	return thumb.URL, original, nil
 }

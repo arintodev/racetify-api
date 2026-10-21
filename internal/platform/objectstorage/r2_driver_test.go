@@ -101,6 +101,7 @@ func testR2Driver(t *testing.T) (*r2Driver, *fakePresign, *fakeHead) {
 			AccessKeyID:     "test-key-id",
 			AccessKeySecret: "test-key-secret",
 			Bucket:          "racetify",
+                PublicBucket:    "racetify",
 		},
 	})
 	if err != nil {

@@ -112,6 +112,7 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 			AccessKeyID:     cfg.Storage.R2.AccessKeyID,
 			AccessKeySecret: cfg.Storage.R2.AccessKeySecret,
 			Bucket:          cfg.Storage.R2.Bucket,
+			PublicBucket:    cfg.Storage.R2.PublicBucket,
 			PublicBaseURL:   cfg.Storage.R2.PublicBaseURL,
 		},
 	})

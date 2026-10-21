@@ -276,7 +276,8 @@ func (s *Service) makeThumbnail(ctx context.Context, tenantID, actorUserID, phot
 // original, under the same album prefix objectKey uses, so both live in
 // one place per album.
 func thumbnailKey(albumID, photoID string) string {
-	return fmt.Sprintf("%sthumb/%s.jpg", albumPrefix(albumID), photoID)
+	_ = albumID
+	return fmt.Sprintf("thumb/%s.jpg", photoID)
 }
 
 // resizeToMaxEdge scales src down so its longest edge is at most maxEdge,

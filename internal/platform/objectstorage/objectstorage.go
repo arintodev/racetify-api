@@ -252,6 +252,12 @@ type R2Config struct {
 	// driver uses as a filesystem path - one bucket, not two, keeps setup
 	// to "create one R2 bucket" regardless of the public/private split.
 	Bucket string
+	// PublicBucket, when set, is a separate R2 bucket used for
+	// public-bucket objects (tenant logos, photo thumbnails) - e.g. one
+	// with a public access mapping (r2.dev / custom domain) and CDN
+	// caching, distinct from the private one. Left empty, public objects
+	// share Bucket, namespaced by their "public/" key prefix.
+	PublicBucket string
 	// PublicBaseURL, when set, prefixes a stable, unsigned URL for
 	// public-bucket objects - e.g. a custom domain or
 	// pub-<hash>.r2.dev mapped to Bucket in the Cloudflare dashboard

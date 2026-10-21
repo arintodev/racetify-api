@@ -52,8 +52,9 @@ func NewProviderRegistry(cfg config.StorageConfig) (*ProviderRegistry, error) {
                 AccessKeyID:     cfg.R2.AccessKeyID,
                 AccessKeySecret: cfg.R2.AccessKeySecret,
                 Bucket:          cfg.R2.Bucket,
-                PublicBaseURL:   cfg.R2.PublicBaseURL,
-            },
+                    PublicBucket:    cfg.R2.PublicBucket,
+                    PublicBaseURL:   cfg.R2.PublicBaseURL,
+                            },
         })
         if err != nil {
             return nil, err

@@ -186,10 +186,10 @@ type StorageConfig struct {
 // runs self-hosted in docker-compose.yml, unlike FaceEmbedConfig's external
 // Cloud Run service below.
 type QdrantConfig struct {
-	Addr           string
-	APIKey         string
-	CollectionDetection string
-    CollectionEnrollment string
+	Addr                 string
+	APIKey               string
+	CollectionDetection  string
+	CollectionEnrollment string
 }
 
 // FaceEmbedConfig points at the face-embedding microservice
@@ -210,7 +210,7 @@ type FaceEmbedConfig struct {
 // takes a downloadable URL for the photo (not the image bytes themselves -
 // internal builds one via objectstorage.GetURL) and
 // answers with every BIB text reading it found. A blank ServiceURL is
-// tolerated the same way 
+// tolerated the same way
 // internal/gallery.Service.RunPhotoProcess still makes thumbnails even
 // when this is unset, it just skips the OCR step.
 type BibOCRConfig struct {
@@ -225,6 +225,7 @@ type StorageR2Config struct {
 	AccessKeyID     string
 	AccessKeySecret string
 	Bucket          string
+	PublicBucket    string
 	// PublicBaseURL, when set, prefixes a stable, unsigned public-bucket
 	// URL (a custom domain or r2.dev subdomain mapped to Bucket). Left
 	// blank, the r2 driver falls back to a long-TTL presigned URL instead
@@ -305,14 +306,15 @@ func Load() (*Config, error) {
 				AccessKeyID:     getEnv("STORAGE_R2_ACCESS_KEY_ID", ""),
 				AccessKeySecret: getEnv("STORAGE_R2_ACCESS_KEY_SECRET", ""),
 				Bucket:          getEnv("STORAGE_R2_BUCKET", ""),
+				PublicBucket:    getEnv("STORAGE_R2_PUBLIC_BUCKET", ""),
 				PublicBaseURL:   getEnv("STORAGE_R2_PUBLIC_BASE_URL", ""),
 			},
 		},
 		Qdrant: QdrantConfig{
-			Addr:           getEnv("QDRANT_ADDR", "localhost:6333"),
-			APIKey:         getEnv("QDRANT_API_KEY", ""),
-			CollectionDetection: getEnv("QDRANT_COLLECTION_DETECTION", "face_detection"),
-    		CollectionEnrollment: getEnv("QDRANT_COLLECTION_ENROLLMENT", "face_enrollment"),
+			Addr:                 getEnv("QDRANT_ADDR", "localhost:6333"),
+			APIKey:               getEnv("QDRANT_API_KEY", ""),
+			CollectionDetection:  getEnv("QDRANT_COLLECTION_DETECTION", "face_detection"),
+			CollectionEnrollment: getEnv("QDRANT_COLLECTION_ENROLLMENT", "face_enrollment"),
 		},
 		FaceEmbed: FaceEmbedConfig{
 			ServiceURL:     getEnv("FACE_EMBED_SERVICE_URL", ""),

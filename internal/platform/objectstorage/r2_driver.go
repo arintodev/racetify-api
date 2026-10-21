@@ -48,9 +48,18 @@ type r2Driver struct {
 	presign       s3PresignAPI
 	head          s3HeadAPI
 	write         s3PutDeleteAPI
-	bucket        string
+	privateBucket string
+        publicBucket  string
 	publicBaseURL string
 }
+
+func (d *r2Driver) bucketName(b Bucket) string {
+    if b == BucketPublic && d.publicBucket != "" {
+        return d.publicBucket
+    }
+    return d.privateBucket
+}
+
 
 // s3PresignAPI is the subset of *s3.PresignClient this driver calls, so
 // tests can supply a fake without needing a real R2/AWS account -
@@ -103,7 +112,8 @@ func newR2Driver(cfg Config) (*r2Driver, error) {
 		presign:       s3.NewPresignClient(client),
 		head:          client,
 		write:         client,
-		bucket:        cfg.R2.Bucket,
+		privateBucket: cfg.R2.Bucket,
+            publicBucket:  cfg.R2.PublicBucket,
 		publicBaseURL: strings.TrimRight(cfg.R2.PublicBaseURL, "/"),
 	}, nil
 }
@@ -133,7 +143,7 @@ func (d *r2Driver) PresignUpload(bucket Bucket, tenantID, key string, ttl time.D
 		return Ticket{}, err
 	}
 	req, err := d.presign.PresignPutObject(context.Background(), &s3.PutObjectInput{
-		Bucket: aws.String(d.bucket),
+		Bucket: aws.String(d.bucketName(bucket)),
 		Key:    aws.String(objKey),
 	}, s3.WithPresignExpires(ttl))
 	if err != nil {
@@ -150,7 +160,7 @@ func (d *r2Driver) PresignDownload(bucket Bucket, tenantID, key string, ttl time
 		return Ticket{}, err
 	}
 	req, err := d.presign.PresignGetObject(context.Background(), &s3.GetObjectInput{
-		Bucket: aws.String(d.bucket),
+		Bucket: aws.String(d.bucketName(bucket)),
 		Key:    aws.String(objKey),
 	}, s3.WithPresignExpires(ttl))
 	if err != nil {
@@ -180,7 +190,7 @@ func (d *r2Driver) PublicURL(tenantID, key string) string {
 		return d.publicBaseURL + "/" + objKey
 	}
 	req, err := d.presign.PresignGetObject(context.Background(), &s3.GetObjectInput{
-		Bucket: aws.String(d.bucket),
+		Bucket: aws.String(d.bucketName(BucketPublic)),
 		Key:    aws.String(objKey),
 	}, s3.WithPresignExpires(r2PublicURLFallbackTTL))
 	if err != nil {
@@ -200,7 +210,7 @@ func (d *r2Driver) ConfirmUpload(bucket Bucket, tenantID, key string) (int64, er
 		return 0, err
 	}
 	out, err := d.head.HeadObject(context.Background(), &s3.HeadObjectInput{
-		Bucket: aws.String(d.bucket),
+		Bucket: aws.String(d.bucketName(bucket)),
 		Key:    aws.String(objKey),
 	})
 	if err != nil {
@@ -291,7 +301,7 @@ func (d *r2Driver) PutDirect(bucket Bucket, tenantID, key string, data []byte) e
 		return err
 	}
 	_, err = d.write.PutObject(context.Background(), &s3.PutObjectInput{
-		Bucket: aws.String(d.bucket),
+		Bucket: aws.String(d.bucketName(bucket)),
 		Key:    aws.String(objKey),
 		Body:   bytes.NewReader(data),
 	})
@@ -309,7 +319,7 @@ func (d *r2Driver) DeleteDirect(bucket Bucket, tenantID, key string) error {
 		return err
 	}
 	_, err = d.write.DeleteObject(context.Background(), &s3.DeleteObjectInput{
-		Bucket: aws.String(d.bucket),
+		Bucket: aws.String(d.bucketName(bucket)),
 		Key:    aws.String(objKey),
 	})
 	if err != nil && !isNoSuchKey(err) {
