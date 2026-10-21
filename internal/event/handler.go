@@ -1,27 +1,28 @@
 package event
 
 import (
-    "net/http"
-    "strings"
-    "time"
-    "fmt"
+	"fmt"
+	"net/http"
+	"strings"
+	"time"
 
 	"github.com/racetify/racetify-api/internal/httpapi/reqctx"
 	"github.com/racetify/racetify-api/internal/httpapi/respond"
+	"github.com/racetify/racetify-api/internal/platform/objectstorage"
 	"github.com/racetify/racetify-api/internal/platform/originpolicy"
 	"github.com/racetify/racetify-api/internal/platform/rbac"
-    "github.com/racetify/racetify-api/internal/storage"
+	"github.com/racetify/racetify-api/internal/storage"
 )
 
 type Handler struct {
 	events *Service
 	// origins validates the frontend origin an emailed link should point at.
 	origins *originpolicy.Policy
-    storage *storage.Service
+	storage *storage.Service
 }
 
 func NewHandler(events *Service, origins *originpolicy.Policy, storage *storage.Service) *Handler {
-    return &Handler{events: events, origins: origins, storage: storage}
+	return &Handler{events: events, origins: origins, storage: storage}
 }
 
 // ==================== events ====================
@@ -182,54 +183,54 @@ func (h *Handler) SetStatus(w http.ResponseWriter, r *http.Request) {
 
 // updateLogoRequest is the payload for PATCH /logo
 type updateLogoRequest struct {
-    LogoStorageID string `json:"logo_storage_id"`
+	LogoStorageID string `json:"logo_storage_id"`
 }
 
 // UpdateLogo updates only the logo_storage_id of an event.
 func (h *Handler) UpdateLogo(w http.ResponseWriter, r *http.Request) {
-    tenantID, _ := reqctx.TenantID(r.Context())
-    actorUserID, _ := reqctx.UserID(r.Context())
-    actorRoleStr, _ := reqctx.MemberRole(r.Context())
+	tenantID, _ := reqctx.TenantID(r.Context())
+	actorUserID, _ := reqctx.UserID(r.Context())
+	actorRoleStr, _ := reqctx.MemberRole(r.Context())
 
-    var req updateLogoRequest
-    if !respond.DecodeJSON(w, r, &req) {
-        return
-    }
+	var req updateLogoRequest
+	if !respond.DecodeJSON(w, r, &req) {
+		return
+	}
 
-    patch := EventPatch{LogoStorageID: &req.LogoStorageID}
-    ev, err := h.events.UpdateEvent(r.Context(), tenantID, actorUserID,
-        rbac.MemberRole(actorRoleStr), r.PathValue("id"), patch)
-    if err != nil {
-        respond.FromServiceError(w, err)
-        return
-    }
-    respond.JSON(w, http.StatusOK, eventResponse(ev))
+	patch := EventPatch{LogoStorageID: &req.LogoStorageID}
+	ev, err := h.events.UpdateEvent(r.Context(), tenantID, actorUserID,
+		rbac.MemberRole(actorRoleStr), r.PathValue("id"), patch)
+	if err != nil {
+		respond.FromServiceError(w, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, eventResponse(ev))
 }
 
 // updateThumbnailRequest is the payload for PATCH /thumbnail
 type updateThumbnailRequest struct {
-    ThumbnailStorageID string `json:"thumbnail_storage_id"`
+	ThumbnailStorageID string `json:"thumbnail_storage_id"`
 }
 
 // UpdateThumbnail updates only the thumbnail_storage_id of an event.
 func (h *Handler) UpdateThumbnail(w http.ResponseWriter, r *http.Request) {
-    tenantID, _ := reqctx.TenantID(r.Context())
-    actorUserID, _ := reqctx.UserID(r.Context())
-    actorRoleStr, _ := reqctx.MemberRole(r.Context())
+	tenantID, _ := reqctx.TenantID(r.Context())
+	actorUserID, _ := reqctx.UserID(r.Context())
+	actorRoleStr, _ := reqctx.MemberRole(r.Context())
 
-    var req updateThumbnailRequest
-    if !respond.DecodeJSON(w, r, &req) {
-        return
-    }
+	var req updateThumbnailRequest
+	if !respond.DecodeJSON(w, r, &req) {
+		return
+	}
 
-    patch := EventPatch{ThumbnailStorageID: &req.ThumbnailStorageID}
-    ev, err := h.events.UpdateEvent(r.Context(), tenantID, actorUserID,
-        rbac.MemberRole(actorRoleStr), r.PathValue("id"), patch)
-    if err != nil {
-        respond.FromServiceError(w, err)
-        return
-    }
-    respond.JSON(w, http.StatusOK, eventResponse(ev))
+	patch := EventPatch{ThumbnailStorageID: &req.ThumbnailStorageID}
+	ev, err := h.events.UpdateEvent(r.Context(), tenantID, actorUserID,
+		rbac.MemberRole(actorRoleStr), r.PathValue("id"), patch)
+	if err != nil {
+		respond.FromServiceError(w, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, eventResponse(ev))
 }
 
 // logoUploadRequest is an empty struct used only for type safety
@@ -240,36 +241,36 @@ type thumbnailUploadRequest struct{}
 
 // LogoUploadURL returns a presigned URL for uploading a logo image.
 func (h *Handler) LogoUploadURL(w http.ResponseWriter, r *http.Request) {
-    tenantID, _ := reqctx.TenantID(r.Context())
-    actorUserID, _ := reqctx.UserID(r.Context())
-    actorRoleStr, _ := reqctx.MemberRole(r.Context())
+	tenantID, _ := reqctx.TenantID(r.Context())
+	actorUserID, _ := reqctx.UserID(r.Context())
+	actorRoleStr, _ := reqctx.MemberRole(r.Context())
 
-    // Construct key: "logo/{event_id}"
-    key := fmt.Sprintf("logo/%s", r.PathValue("id"))
-    ticket, err := h.storage.RequestUpload(r.Context(), tenantID, actorUserID,
-        rbac.MemberRole(actorRoleStr), "event-logos", key, "image/*")
-    if err != nil {
-        respond.FromServiceError(w, err)
-        return
-    }
-    respond.JSON(w, http.StatusOK, ticket)
+	// Construct key: "logo/{event_id}"
+	key := fmt.Sprintf("logo/%s", r.PathValue("id"))
+	ticket, err := h.storage.RequestUpload(r.Context(), tenantID, actorUserID,
+		rbac.MemberRole(actorRoleStr), string(objectstorage.BucketPublic), key, "image/*")
+	if err != nil {
+		respond.FromServiceError(w, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, ticket)
 }
 
 // ThumbnailUploadURL returns a presigned URL for uploading a thumbnail image.
 func (h *Handler) ThumbnailUploadURL(w http.ResponseWriter, r *http.Request) {
-    tenantID, _ := reqctx.TenantID(r.Context())
-    actorUserID, _ := reqctx.UserID(r.Context())
-    actorRoleStr, _ := reqctx.MemberRole(r.Context())
+	tenantID, _ := reqctx.TenantID(r.Context())
+	actorUserID, _ := reqctx.UserID(r.Context())
+	actorRoleStr, _ := reqctx.MemberRole(r.Context())
 
-    // Construct key: "thumbnail/{event_id}"
-    key := fmt.Sprintf("thumbnail/%s", r.PathValue("id"))
-    ticket, err := h.storage.RequestUpload(r.Context(), tenantID, actorUserID,
-        rbac.MemberRole(actorRoleStr), "event-thumbnails", key, "image/*")
-    if err != nil {
-        respond.FromServiceError(w, err)
-        return
-    }
-    respond.JSON(w, http.StatusOK, ticket)
+	// Construct key: "thumbnail/{event_id}"
+	key := fmt.Sprintf("thumbnail/%s", r.PathValue("id"))
+	ticket, err := h.storage.RequestUpload(r.Context(), tenantID, actorUserID,
+		rbac.MemberRole(actorRoleStr), string(objectstorage.BucketPublic), key, "image/*")
+	if err != nil {
+		respond.FromServiceError(w, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, ticket)
 }
 
 // ==================== races ====================

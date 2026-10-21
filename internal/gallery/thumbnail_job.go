@@ -28,23 +28,23 @@
 package gallery
 
 import (
-    "bytes"
-    "context"
-    "encoding/json"
-    "fmt"
-    "image"
-    "image/jpeg"
-    _ "image/png" // decode support only; this job never writes PNGs
-    "math"
-    "path"
-    "strings"
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"image"
+	"image/jpeg"
+	_ "image/png" // decode support only; this job never writes PNGs
+	"math"
+	"path"
+	"strings"
 
-    "golang.org/x/image/draw"
+	"golang.org/x/image/draw"
 
-    "github.com/racetify/racetify-api/internal/domain"
-    "github.com/racetify/racetify-api/internal/jobqueue"
-    "github.com/racetify/racetify-api/internal/platform/objectstorage"
-    "github.com/racetify/racetify-api/internal/watermark"
+	"github.com/racetify/racetify-api/internal/domain"
+	"github.com/racetify/racetify-api/internal/jobqueue"
+	"github.com/racetify/racetify-api/internal/platform/objectstorage"
+	"github.com/racetify/racetify-api/internal/watermark"
 )
 
 // Thumbnail dimensions/format (§ "Implement" step 1 of the task that added
@@ -140,30 +140,30 @@ func (s *Service) RunPhotoProcess(ctx context.Context, job *jobqueue.Job) (map[s
 		return nil, "", fmt.Errorf("gallery: load watermarks: %w", err)
 	}
 
-    // The OCR step has been removed; we only create thumbnails.
-    made, failed := 0, 0
-    var failures []string
-    for i, photoID := range p.PhotoIDs {
-        if err := ctx.Err(); err != nil {
-            return nil, "", err
-        }
-        // Run the thumbnail creation; handle errors.
-        _, err := s.makeThumbnail(ctx, job.TenantID, job.CreatedBy, photoID, watermarks, assets)
-        if err != nil {
-            failed++
-            failures = append(failures, fmt.Sprintf("%s: %v", photoID, err))
-        } else {
-            made++
-        }
-        _ = s.queue.UpdateProgress(ctx, job, i+1, total)
-    }
-    result := map[string]any{
-        "count": total,
-        "made":  made,
-        "failed": failed,
-    }
+	// The OCR step has been removed; we only create thumbnails.
+	made, failed := 0, 0
+	var failures []string
+	for i, photoID := range p.PhotoIDs {
+		if err := ctx.Err(); err != nil {
+			return nil, "", err
+		}
+		// Run the thumbnail creation; handle errors.
+		_, err := s.makeThumbnail(ctx, job.TenantID, job.CreatedBy, photoID, watermarks, assets)
+		if err != nil {
+			failed++
+			failures = append(failures, fmt.Sprintf("%s: %v", photoID, err))
+		} else {
+			made++
+		}
+		_ = s.queue.UpdateProgress(ctx, job, i+1, total)
+	}
+	result := map[string]any{
+		"count":  total,
+		"made":   made,
+		"failed": failed,
+	}
 	var msgs []string
-    if failed > 0 {
+	if failed > 0 {
 		msg := fmt.Sprintf("%d of %d photos could not be thumbnailed", failed, total)
 		if len(failures) > 0 {
 			msg += ": " + strings.Join(failures, "; ")
@@ -261,15 +261,15 @@ func (s *Service) makeThumbnail(ctx context.Context, tenantID, actorUserID, phot
 	}
 
 	key := thumbnailKey(p.AlbumID, p.ID)
-	obj, err := s.storage.StoreGenerated(ctx, tenantID, actorUserID, string(objectstorage.BucketPrivate), key, "image/jpeg", buf.Bytes())
-    // Persist the thumbnail reference in a new tenant‑scoped transaction
-    if err := s.db.WithTenantTx(ctx, tenantID, func(ctx context.Context) error {
-        return s.repo.UpdatePhotoThumbnail(ctx, tenantID, p.ID, obj.ID)
-    }); err != nil {
-        return 0, fmt.Errorf("record thumbnail: %w", err)
-    }
-    // Successful thumbnail creation
-    return thumbnailMade, nil
+	obj, err := s.storage.StoreGenerated(ctx, tenantID, actorUserID, string(objectstorage.BucketPublic), key, "image/jpeg", buf.Bytes())
+	// Persist the thumbnail reference in a new tenant‑scoped transaction
+	if err := s.db.WithTenantTx(ctx, tenantID, func(ctx context.Context) error {
+		return s.repo.UpdatePhotoThumbnail(ctx, tenantID, p.ID, obj.ID)
+	}); err != nil {
+		return 0, fmt.Errorf("record thumbnail: %w", err)
+	}
+	// Successful thumbnail creation
+	return thumbnailMade, nil
 }
 
 // thumbnailKey is where a photo's thumbnail is stored: alongside its
